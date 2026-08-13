@@ -69,5 +69,9 @@ DATASET_NAMED_MIXTURES = {
         ("BEHAVIOR_challenge", 1.0, "R1Pro"),
     ],
 
+    "piper_pick_place": [
+        ("", 1.0, "piper"),
+    ],
+
 
 }
