@@ -15,6 +15,7 @@ VLA-JEPA 在 Piper 真机数据上的训练启动方式、配置要点与排错�
 3. [预训练权重](#3-预训练权重)
 4. [配置文件关键项](#4-配置文件关键项)
 5. [启动命令](#5-启动命令)
+   - [5.7 ICLR_real_world 八个任务：逐个训练](#57-iclr_real_world-八个任务逐个训练)
 6. [训练输出](#6-训练输出)
 7. [监控与日志](#7-监控与日志)
 8. [常见问题](#8-常见问题)
@@ -315,6 +316,280 @@ accelerate launch \
   ./starVLA/training/train_vlajepa_cotrain.py \
   --config_yaml ./scripts/config/vlajepa_cotrain.yaml
 ```
+
+---
+
+### 5.7 ICLR_real_world 八个任务：逐个训练
+
+`Datasets/ICLR_real_world/` 下的 8 个数据集**各训一个模型**，
+每个 **20000 步**，每 **5000 步**存一个权重（共 4 个：5000 / 10000 / 15000 / 20000）。
+
+#### 5.7.1 数据集与配置文件对照
+
+配置文件已生成在 `scripts/config/`，无需再改：
+
+| # | 数据集（`_v2_1`） | episodes | frames | 配置文件 | `run_id` / 输出目录 |
+|---|---|---|---|---|---|
+| 1 | `adjust_cup_0409_1_offset_state` | 50 | 6837 | `iclr_adjust_cup.yaml` | `checkpoints/iclr_adjust_cup/` |
+| 2 | `open_cabinet_all_0423_1_offset_state` | 50 | 6275 | `iclr_open_cabinet.yaml` | `checkpoints/iclr_open_cabinet/` |
+| 3 | `pick_banana_100_newTable_1_offset_state` | 100 | 12209 | `iclr_pick_banana_newtable.yaml` | `checkpoints/iclr_pick_banana_newtable/` |
+| 4 | `pick_banana_pot_0730_1_offset_state` | 48 | 12224 | `iclr_pick_banana_pot.yaml` | `checkpoints/iclr_pick_banana_pot/` |
+| 5 | `pick_block_100_1_offset_state` | 100 | 18572 | `iclr_pick_block.yaml` | `checkpoints/iclr_pick_block/` |
+| 6 | `pick_eggplant_drawer_0730_1_offset_state` | 50 | 6809 | `iclr_pick_eggplant_drawer.yaml` | `checkpoints/iclr_pick_eggplant_drawer/` |
+| 7 | `pick_eggplant_from_cluttered_0414_1_offset_state` | 87 | 12884 | `iclr_pick_eggplant_cluttered.yaml` | `checkpoints/iclr_pick_eggplant_cluttered/` |
+| 8 | `sponge_wipe_0423_1_offset_state` | 49 | 5619 | `iclr_sponge_wipe.yaml` | `checkpoints/iclr_sponge_wipe/` |
+
+每份配置的关键项（8 份完全一致，只有 `run_id` 和 `data_root_dir` 不同）：
+
+```yaml
+run_id: iclr_<短名>
+datasets:
+  vla_data:
+    data_root_dir: /share/.../Datasets/ICLR_real_world/<数据集名>_v2_1
+    data_mix: piper_pick_place          # 该 mix 指向 data_root_dir 本身，逐个训练无需改 mixtures.py
+    per_device_batch_size: 4
+trainer:
+  max_train_steps: 20000
+  save_interval: 5000                   # → steps_{5000,10000,15000,20000}_pytorch_model.pt
+  num_warmup_steps: 1000
+  eval_interval: 500
+```
+
+#### 5.7.2 通用命令模板
+
+```bash
+cd /share/home/tm866052366100000/a926312360/LXX/project/VLA-JEPA
+mkdir -p log
+
+CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch \
+  --config_file ./starVLA/config/deepseeds/deepspeed_zero2.yaml \
+  --num_processes 4 \
+  --main_process_port 29500 \
+  ./starVLA/training/train_starvla.py \
+  --config_yaml ./scripts/config/<配置文件> \
+  > log/<run_id>.log 2>&1
+```
+
+> - 上面按 **4 卡**写（`CUDA_VISIBLE_DEVICES=0,1,2,3` + `--num_processes 4`）。
+>   卡数不同时这两处要**同步修改**，保持一致
+> - 单卡跑不了这个配置（2.77B 模型 + Adam 状态放不下 24 GB），必须 ≥2 卡；
+>   单卡要加 CPU Offload，见 §8.2
+> - 显存充裕时可以把各配置里的 `per_device_batch_size` 从 4 调到 8
+
+#### 5.7.3 八个任务的启动命令
+
+**① adjust_cup_0409**
+
+```bash
+cd /share/home/tm866052366100000/a926312360/LXX/project/VLA-JEPA && \
+CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch \
+  --config_file ./starVLA/config/deepseeds/deepspeed_zero2.yaml \
+  --num_processes 4 --main_process_port 29500 \
+  ./starVLA/training/train_starvla.py \
+  --config_yaml ./scripts/config/iclr_adjust_cup.yaml \
+  > log/iclr_adjust_cup.log 2>&1
+```
+
+**② open_cabinet_all_0423**
+
+```bash
+cd /share/home/tm866052366100000/a926312360/LXX/project/VLA-JEPA && \
+CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch \
+  --config_file ./starVLA/config/deepseeds/deepspeed_zero2.yaml \
+  --num_processes 4 --main_process_port 29501 \
+  ./starVLA/training/train_starvla.py \
+  --config_yaml ./scripts/config/iclr_open_cabinet.yaml \
+  > log/iclr_open_cabinet.log 2>&1
+```
+
+**③ pick_banana_100_newTable**
+
+```bash
+cd /share/home/tm866052366100000/a926312360/LXX/project/VLA-JEPA && \
+CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch \
+  --config_file ./starVLA/config/deepseeds/deepspeed_zero2.yaml \
+  --num_processes 4 --main_process_port 29502 \
+  ./starVLA/training/train_starvla.py \
+  --config_yaml ./scripts/config/iclr_pick_banana_newtable.yaml \
+  > log/iclr_pick_banana_newtable.log 2>&1
+```
+
+**④ pick_banana_pot_0730**
+
+```bash
+cd /share/home/tm866052366100000/a926312360/LXX/project/VLA-JEPA && \
+CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch \
+  --config_file ./starVLA/config/deepseeds/deepspeed_zero2.yaml \
+  --num_processes 4 --main_process_port 29503 \
+  ./starVLA/training/train_starvla.py \
+  --config_yaml ./scripts/config/iclr_pick_banana_pot.yaml \
+  > log/iclr_pick_banana_pot.log 2>&1
+```
+
+**⑤ pick_block_100**
+
+```bash
+cd /share/home/tm866052366100000/a926312360/LXX/project/VLA-JEPA && \
+CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch \
+  --config_file ./starVLA/config/deepseeds/deepspeed_zero2.yaml \
+  --num_processes 4 --main_process_port 29504 \
+  ./starVLA/training/train_starvla.py \
+  --config_yaml ./scripts/config/iclr_pick_block.yaml \
+  > log/iclr_pick_block.log 2>&1
+```
+
+**⑥ pick_eggplant_drawer_0730**
+
+```bash
+cd /share/home/tm866052366100000/a926312360/LXX/project/VLA-JEPA && \
+CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch \
+  --config_file ./starVLA/config/deepseeds/deepspeed_zero2.yaml \
+  --num_processes 4 --main_process_port 29505 \
+  ./starVLA/training/train_starvla.py \
+  --config_yaml ./scripts/config/iclr_pick_eggplant_drawer.yaml \
+  > log/iclr_pick_eggplant_drawer.log 2>&1
+```
+
+**⑦ pick_eggplant_from_cluttered_0414**
+
+```bash
+cd /share/home/tm866052366100000/a926312360/LXX/project/VLA-JEPA && \
+CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch \
+  --config_file ./starVLA/config/deepseeds/deepspeed_zero2.yaml \
+  --num_processes 4 --main_process_port 29506 \
+  ./starVLA/training/train_starvla.py \
+  --config_yaml ./scripts/config/iclr_pick_eggplant_cluttered.yaml \
+  > log/iclr_pick_eggplant_cluttered.log 2>&1
+```
+
+**⑧ sponge_wipe_0423**
+
+```bash
+cd /share/home/tm866052366100000/a926312360/LXX/project/VLA-JEPA && \
+CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch \
+  --config_file ./starVLA/config/deepseeds/deepspeed_zero2.yaml \
+  --num_processes 4 --main_process_port 29507 \
+  ./starVLA/training/train_starvla.py \
+  --config_yaml ./scripts/config/iclr_sponge_wipe.yaml \
+  > log/iclr_sponge_wipe.log 2>&1
+```
+
+> 每个任务用**不同的 `--main_process_port`**（29500~29507），
+> 这样万一你想同时跑两个也不会端口冲突。
+
+#### 5.7.4 一条命令跑完全部 8 个（串行）
+
+训练脚本之间互相独立，直接循环即可：
+
+```bash
+cd /share/home/tm866052366100000/a926312360/LXX/project/VLA-JEPA && mkdir -p log
+
+for name in adjust_cup open_cabinet pick_banana_newtable pick_banana_pot \
+            pick_block pick_eggplant_drawer pick_eggplant_cluttered sponge_wipe
+do
+  echo "===== [$(date '+%F %T')] START iclr_${name} ====="
+  CUDA_VISIBLE_DEVICES=0,1,2,3 accelerate launch \
+    --config_file ./starVLA/config/deepseeds/deepspeed_zero2.yaml \
+    --num_processes 4 --main_process_port 29500 \
+    ./starVLA/training/train_starvla.py \
+    --config_yaml ./scripts/config/iclr_${name}.yaml \
+    > log/iclr_${name}.log 2>&1
+  echo "===== [$(date '+%F %T')] DONE  iclr_${name} (exit $?) ====="
+done
+```
+
+建议放到 tmux / screen 里跑，避免 SSH 断连中断训练：
+
+```bash
+tmux new -s iclr_train
+# 粘贴上面的循环，然后 Ctrl+B 再按 D 脱离
+tmux attach -t iclr_train          # 重新连回查看
+```
+
+#### 5.7.5 时间预算
+
+每个任务固定 **4 卡**，参考实测数据（4 卡、`per_device_batch_size: 4`）：**约 3.6 s/step**
+
+```
+单模型 20000 步 = 20000 × 3.6 s ≈ 20 小时
+```
+
+所以 8 个模型的总墙钟时间**取决于机器上有几组 4 卡**：
+
+| 机器规模 | 并行方式 | 总墙钟时间 |
+|---|---|---|
+| 4 卡 | 只能串行，一次跑 1 个 | **~6.7 天** |
+| 8 卡 | 2 个任务并行（各 4 卡） | **~3.4 天** |
+| 16 卡 | 4 个任务并行（各 4 卡） | **~1.7 天** |
+| 32 卡 | 8 个任务全并行 | **~20 小时** |
+
+> ⚠️ **4 卡串行是 6.7 天的任务，提前规划好。**
+> 如果机器卡多，最划算的是**每个任务分一组 4 卡并行跑**——
+> 比如 32 卡时可以 8 个任务同时开，一晚上就跑完。
+>
+> 多任务并行时记得给每个任务**分配不同的 `CUDA_VISIBLE_DEVICES` 和 `--main_process_port`**，
+> 且 `--num_processes` 始终是 4：
+
+```bash
+# 例：16 卡机器，4 个任务并行（每个 4 卡）
+CUDA_VISIBLE_DEVICES=0,1,2,3   accelerate launch --num_processes 4 --main_process_port 29500 \
+  ... --config_yaml ./scripts/config/iclr_adjust_cup.yaml            > log/iclr_adjust_cup.log 2>&1 &
+CUDA_VISIBLE_DEVICES=4,5,6,7   accelerate launch --num_processes 4 --main_process_port 29501 \
+  ... --config_yaml ./scripts/config/iclr_open_cabinet.yaml          > log/iclr_open_cabinet.log 2>&1 &
+CUDA_VISIBLE_DEVICES=8,9,10,11 accelerate launch --num_processes 4 --main_process_port 29502 \
+  ... --config_yaml ./scripts/config/iclr_pick_banana_newtable.yaml  > log/iclr_pick_banana_newtable.log 2>&1 &
+CUDA_VISIBLE_DEVICES=12,13,14,15 accelerate launch --num_processes 4 --main_process_port 29503 \
+  ... --config_yaml ./scripts/config/iclr_pick_banana_pot.yaml       > log/iclr_pick_banana_pot.log 2>&1 &
+wait
+```
+
+#### 5.7.6 训练过程中怎么盯
+
+```bash
+# 实时看日志
+tail -f log/iclr_pick_block.log
+
+# 只看进度条（带 s/it 和预计剩余时间）
+tail -c 400 log/iclr_pick_block.log | tr '\r' '\n' | tail -2
+
+# 看已保存的权重
+ls -la checkpoints/iclr_pick_block/checkpoints/
+
+# 看评估曲线
+tensorboard --logdir checkpoints/iclr_pick_block/tensorboard
+```
+
+#### 5.7.7 训练完成后
+
+每个任务的产出：
+
+```
+checkpoints/iclr_<短名>/
+├── config.yaml
+├── dataset_statistics.json
+├── tensorboard/
+├── checkpoints/
+│   ├── steps_5000_pytorch_model.pt      # 每个 6.16 GB
+│   ├── steps_10000_pytorch_model.pt
+│   ├── steps_15000_pytorch_model.pt
+│   └── steps_20000_pytorch_model.pt
+└── final_model/
+    └── pytorch_model.pt
+```
+
+> ⚠️ **磁盘**：每个 run 约 **37 GB**（6 个权重 × 6.16 GB），8 个任务合计约 **300 GB**，提前确认空间。
+
+开环测试（每个任务用自己 run 目录下的 `config.yaml`）：
+
+```bash
+CUDA_VISIBLE_DEVICES=0 /opt/conda/envs/VLA_JEPA/bin/python scripts/eval_openloop.py \
+  --config_yaml checkpoints/iclr_pick_block/config.yaml \
+  --checkpoint  checkpoints/iclr_pick_block/final_model/pytorch_model.pt \
+  --output_dir  eval_openloop/iclr_pick_block \
+  --windows_per_episode 8 --batch_size 4 --seed 0
+```
+
+详见 [`03_openloop_testing.md`](./03_openloop_testing.md)。
 
 ---
 
