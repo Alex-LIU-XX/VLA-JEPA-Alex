@@ -1,4 +1,6 @@
 checkpoints/
+log/
+eval_openloop/
 *.pyc
 starVLA.egg-info/
 opencode.json

@@ -41,10 +41,18 @@ def build_dataloader(cfg, dataset_py="lerobot_datasets_oxe"): # TODO now here on
         from starVLA.dataloader.lerobot_datasets import get_vla_dataset, collate_fn
         vla_dataset_cfg = cfg.datasets.vla_data
 
+        # The mixture dataset derives its sampling RNG from `seed` alone, so a
+        # rank-invariant seed makes every DDP rank draw the *same*
+        # (trajectory, step) pair on every step (there is no augmentation in
+        # the pipeline to break the tie). Offset the seed by the rank so each
+        # GPU contributes distinct samples to the global batch.
+        rank = dist.get_rank() if dist.is_initialized() else 0
         vla_dataset = get_vla_dataset(
             data_cfg=vla_dataset_cfg,
             action_horizon=cfg.framework.action_model.action_horizon,
-            video_horizon=cfg.framework.vj2_model.num_frames)
+            video_horizon=cfg.framework.vj2_model.num_frames,
+            seed=int(cfg.get("seed", 42)) + rank,
+        )
         
         vla_train_dataloader = DataLoader(
             vla_dataset,
