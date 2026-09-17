@@ -13,6 +13,7 @@
 |---|---|
 | [`reports/openloop_adjust_cup_5k.md`](./reports/openloop_adjust_cup_5k.md) | adjust_cup_0409（steps_5000）：MAE 0.0410、夹爪判定 98.4% |
 | [`reports/openloop_pick_open_place_0724.md`](./reports/openloop_pick_open_place_0724.md) | pick_open_place_0724（10k / 20k 对比） |
+| [`reports/openloop_iclr_8tasks.md`](./reports/openloop_iclr_8tasks.md) | **ICLR 真机 8 任务 × 30 个 checkpoint**：MAE 0.0214~0.0271、赢 state-hold 64%~81%、夹爪 98%~99.8%；含 step 0 归因与采样器消融（4→8/16 步） |
 
 ---
 
@@ -334,6 +335,30 @@ grep -E "run_id|data_root_dir" checkpoints/<run_id>/config.yaml
 `data_root_dir` 就是该权重训练时用的数据集。**用别的数据集测属于跨任务零样本测试，
 结果差不代表权重有问题。**
 
+### 8.9 自己写脚本时必须用 `state=`，写成 `states=` 会被静默吞掉 ⚠️
+
+`VLA_JEPA.predict_action(self, batch_images, instructions, state=None, **kwargs)`
+—— 关键字写错不会报错，本体状态直接被丢掉：
+
+```python
+model.predict_action(batch_images=imgs, instructions=langs, state=states)    # ✅
+model.predict_action(batch_images=imgs, instructions=langs, states=states)   # ❌ 静默无 state
+```
+
+实测同一个窗口的 MAE 会从 **0.0275 恶化到 0.0793**（3 倍），且日志里看不出任何异常。
+这是 §8.2「`**kwargs` 静默吃掉参数」的另一个实例，改脚本后在 `analyze_loss.py`
+一类自研推理里也要留意。
+
+### 8.10 同窗口不同 batch 组成 → 结果不同（但同一命令可复现）
+
+动作头的初始噪声按 batch 形状从 `torch.randn` 采样，所以**同一个窗口放在 batch=4 和
+batch=12 里会得到不同的预测**（实测采样标准差可达 0.020 ~ 0.025）。
+同一条 `eval_openloop.py` 命令重复跑两次结果完全一致（已验证），
+但**逐窗口数值只在「同命令 + 同 batch 划分」下可比**。
+要降低这部分方差：把 `num_inference_timesteps` 从 4 提到 8（单次 MAE −22%、延迟 +15%），
+或对动作头做 K 次采样取平均（见
+[`reports/openloop_iclr_8tasks.md`](./reports/openloop_iclr_8tasks.md) §2.4）。
+
 ---
 
 ## 9. 典型工作流：测一个新的 checkpoint
@@ -381,6 +406,7 @@ python scripts/plot_openloop_trajectory.py \
 |---|---|
 | [`reports/openloop_adjust_cup_5k.md`](./reports/openloop_adjust_cup_5k.md) | adjust_cup_0409（steps_5000）开环测试报告 |
 | [`reports/openloop_pick_open_place_0724.md`](./reports/openloop_pick_open_place_0724.md) | pick_open_place_0724（10k/20k）开环测试报告 |
+| [`reports/openloop_iclr_8tasks.md`](./reports/openloop_iclr_8tasks.md) | ICLR 真机 8 任务 × 30 checkpoint 开环测试报告（含采样器消融、部署建议） |
 | [`01_data_conversion.md`](./01_data_conversion.md) | 训练前的数据转换（v3.0 → v2.1）与机器人注册 |
 | [`02_training.md`](./02_training.md) | 训练启动命令说明 |
 | [`archive/adjust_cup_real_world.md`](./archive/adjust_cup_real_world.md) | adjust_cup 真机数据接入与训练全过程 |
