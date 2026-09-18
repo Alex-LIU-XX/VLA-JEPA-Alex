@@ -45,6 +45,29 @@ python examples/real-robot/piper_zmq_server.py \
 该脚本只读取数据集并发送 observation，不连接机械臂；它复用
 `selftest_client.py` 的 `msgpack_numpy + JPEG + ZMQ REQ/REP` 封装方式。
 
+逐帧执行一个离线 episode 的 server-client 开环回放并绘图：
+
+```bash
+# server 终端：保持运行直到 client 完成
+python examples/real-robot/piper_zmq_server.py \
+    --ckpt_path checkpoints/iclr_adjust_cup/final_model/pytorch_model.pt \
+    --host 127.0.0.1 --port 15560 --use-bf16 --no-binarize-gripper \
+    --default-instruction "Put the cup the right way up on the table."
+
+# client 终端：--max-steps 0 表示完整 episode
+.venv/bin/python scripts/piper_zmq_openloop_client.py \
+    --config_yaml checkpoints/iclr_adjust_cup/config.yaml \
+    --output_dir eval_openloop/iclr_adjust_cup_piper_zmq_openloop_ep0 \
+    --host 127.0.0.1 --port 15560 \
+    --num-episodes 1 --stride 1 --max-steps 0 \
+    --server-gripper-mode continuous
+```
+
+输出包含 `openloop_result.json`、`predictions.npz`、`plot_manifest.json`，以及
+`trajectory_fit.png`、`trajectory_zoom.png`、`trajectory_2d.png`、
+`error_over_time.png`、`gripper_timeline.png`。该回放使用数据集 observation，
+不向真实机械臂发送动作。
+
 控制端（机器人 PC）：
 
 ```bash

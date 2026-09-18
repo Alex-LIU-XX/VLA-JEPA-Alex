@@ -27,6 +27,10 @@
 - **真机 server 样例**：[`examples/real-robot/`](../../examples/real-robot/README.md) ——
   `wire.py`（线格式）、`transport.py`（ZMQ REP + 异常兜底）、`policy.py`（观测→动作）、
   `piper_zmq_server.py`（入口）、`selftest_client.py`（协议自检，无需机械臂/GPU）。
+- **真机数据集通信测试**：[`scripts/piper_zmq_dataset_client_test.py`](../../scripts/piper_zmq_dataset_client_test.py) ——
+  用真实数据集 observation 验证 server 解包、推理和 action 回包。
+- **真机 server-client 开环回放**：[`scripts/piper_zmq_openloop_client.py`](../../scripts/piper_zmq_openloop_client.py) ——
+  逐帧通信并生成 `openloop_result.json`、`predictions.npz` 和轨迹图。
 - **真机离线回放**：[`scripts/piper_zmq_replay.py`](../../scripts/piper_zmq_replay.py) ——
   用真实权重复现客户端的 letterbox + JPEG/msgpack 观测路径，不连接 ZMQ 或机械臂。
 - **控制端示例**（独立仓库）：`~/repo/Double_Piper_Teleop/vla_infer/example/vlajepa/vlajepa_piper_client.py`

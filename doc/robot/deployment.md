@@ -249,6 +249,8 @@ bash ./examples/SimplerEnv/eval_files/auto_eval_scripts/calc_success_rate.sh \
 | `.../star_put_in_drawer_visual_matching.sh` | long-horizon 放苹果进抽屉（⚠️ 同 bug） | 同上 | 同上 |
 | `.../calc_success_rate.sh` | 用输出视频统计成功率 | `<task> <model_path> [log_dir_root]` | 打印成功率（内部调 `calc_metrics_evaluation_videos.py`） |
 | `.../check_ports_range.sh` | 检查端口是否空闲 | ⚠️ 检查的是 **5400-5500**，与实际 `base_port=6680` 不匹配 | — |
+| `scripts/piper_zmq_dataset_client_test.py` | 用真实数据集样本验证 Piper ZMQ server 的 observation/action 通信 | `--config_yaml`、`--host`、`--port` | `test_result.json` |
+| `scripts/piper_zmq_openloop_client.py` | 逐帧 server-client 开环回放并绘制动作轨迹 | `--config_yaml`、`--host`、`--port`、episode 参数 | `openloop_result.json`、`predictions.npz`、PNG 轨迹图 |
 
 **脚本里的隐含约定（照抄时最容易漏）** `[已确认]`：
 

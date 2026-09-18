@@ -173,8 +173,8 @@ def plot_2d(pred, gt, traj, step, episodes, out_path, cn=True):
         tt = step[sel]
         for row, (a, b) in enumerate(PAIRS):
             ax = axes[row][col]
-            sc = ax.scatter(gt[sel, 0, a], gt[sel, 0, b], c=tt, cmap="viridis",
-                            s=13, zorder=3, label="真值" if cn else "GT")
+            ax.scatter(gt[sel, 0, a], gt[sel, 0, b], c=tt, cmap="viridis",
+                       s=13, zorder=3, label="真值" if cn else "GT")
             ax.plot(pred[sel, 0, a], pred[sel, 0, b], color="tab:red", lw=1.2,
                     alpha=0.85, zorder=4, label="预测" if cn else "pred")
             ax.set_xlabel(f"{DIM_NAMES[a]} (rad)")
@@ -234,7 +234,7 @@ def plot_gripper(pred, gt, traj, step, episodes, out_path, cn=True):
         acc = ((pred[sel, 0, 6] > 0) == (gt[sel, 0, 6] > 0)).mean()
         ax.set_title(f"episode {ep}  开合判定准确率 {100 * acc:.1f}%" if cn else
                      f"episode {ep}  open/close accuracy {100 * acc:.1f}%", fontsize=10)
-        ax.set_ylabel("夹爪 (归一化)" if cn else "gripper (norm.)")
+        ax.set_ylabel("夹爪 (物理值)" if cn else "gripper (physical)")
         ax.grid(alpha=0.3)
         if r == 0:
             ax.legend(fontsize=9, ncol=2)
@@ -261,7 +261,7 @@ def main():
     cn = setup_fonts()
     print(f"CJK font available: {cn}")
 
-    pred, gt, traj, step, lo, hi = load(args.predictions)
+    pred, gt, traj, step, _, _ = load(args.predictions)
     all_eps = _episode_axes(traj)
     episodes = args.episodes if args.episodes else all_eps[:3]
     episodes = [e for e in episodes if e in all_eps]
