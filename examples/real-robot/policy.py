@@ -46,9 +46,13 @@ def to_pil_image(name: str, value: t.Any) -> Image.Image:
         raise ValueError(f"{name} must be HxWx3 RGB, got shape={value.shape}")
     arr = value
     if np.issubdtype(arr.dtype, np.floating):
-        arr = (np.clip(arr, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8)
+        if not np.all(np.isfinite(arr)) or np.any((arr < 0.0) | (arr > 1.0)):
+            raise ValueError(f"{name} float image must be finite and in [0, 1]")
+        arr = (arr * 255.0 + 0.5).astype(np.uint8)
     elif arr.dtype != np.uint8:
-        arr = arr.astype(np.uint8)
+        raise TypeError(f"{name} must be uint8 or floating point, got {arr.dtype}")
+    if arr.shape[0] == 0 or arr.shape[1] == 0:
+        raise ValueError(f"{name} must have non-zero height and width")
     arr = np.ascontiguousarray(arr)  # 负 stride / 非连续时复制
     return Image.fromarray(arr, mode="RGB")
 
@@ -72,17 +76,15 @@ def unnormalize_actions(normalized: np.ndarray, stats: t.Dict[str, t.Any], binar
     Piper 的数据配置仍对 gripper 使用 `min_max`；因此关闭二值化时，显式对
     gripper 做 min/max 反归一化，避免把归一化值直接当作物理动作下发。
     """
-    if "q99" in stats and "q01" in stats:
-        hi, lo = np.asarray(stats["q99"], dtype=np.float64), np.asarray(stats["q01"], dtype=np.float64)
-        probe = hi
-    elif "max" in stats and "min" in stats:
-        hi, lo = np.asarray(stats["max"], dtype=np.float64), np.asarray(stats["min"], dtype=np.float64)
-        probe = hi
-    else:
-        raise KeyError(f"dataset_statistics.action 里既没有 q01/q99 也没有 min/max，实际键：{sorted(stats)}")
-
-    mask = np.asarray(stats.get("mask", np.ones_like(probe, dtype=bool)), dtype=bool).copy()
-    actions = np.clip(np.asarray(normalized, dtype=np.float64), -1.0, 1.0)
+    hi, lo, mask = _action_statistics(stats)
+    actions = np.asarray(normalized, dtype=np.float64)
+    if actions.ndim != 2 or actions.shape[0] == 0:
+        raise ValueError(f"normalized actions must be non-empty (T, D), got {actions.shape}")
+    if actions.shape[1] != hi.shape[0]:
+        raise ValueError(f"normalized action dim {actions.shape[1]} != statistics dim {hi.shape[0]}")
+    if not np.all(np.isfinite(actions)):
+        raise ValueError("normalized actions contain NaN/Inf")
+    actions = np.clip(actions, -1.0, 1.0)
     if binarize_gripper and actions.shape[-1] > 6:
         # 与框架/仿真客户端一致：第 6 维（夹爪）按 0.5 阈值二值化
         actions[:, 6] = np.where(actions[:, 6] < 0.5, 0.0, 1.0)
@@ -90,7 +92,54 @@ def unnormalize_actions(normalized: np.ndarray, stats: t.Dict[str, t.Any], binar
         # Piper data_config.py uses min_max for action.gripper even though the
         # generic action mask marks gripper as a non-scaled command dimension.
         mask[6] = True
-    return np.where(mask, 0.5 * (actions + 1.0) * (hi - lo) + lo, actions)
+    result = np.where(mask, 0.5 * (actions + 1.0) * (hi - lo) + lo, actions)
+    if not np.all(np.isfinite(result)):
+        raise ValueError("unnormalized actions contain NaN/Inf")
+    return result
+
+
+def _action_statistics(stats: t.Dict[str, t.Any]) -> t.Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    if "q99" in stats and "q01" in stats:
+        hi, lo = np.asarray(stats["q99"], dtype=np.float64), np.asarray(stats["q01"], dtype=np.float64)
+    elif "max" in stats and "min" in stats:
+        hi, lo = np.asarray(stats["max"], dtype=np.float64), np.asarray(stats["min"], dtype=np.float64)
+    else:
+        raise KeyError(f"dataset_statistics.action 里既没有 q01/q99 也没有 min/max，实际键：{sorted(stats)}")
+    if hi.ndim != 1 or lo.ndim != 1 or hi.shape != lo.shape or hi.size == 0:
+        raise ValueError(f"action statistics must be matching non-empty vectors, got {lo.shape} and {hi.shape}")
+    if not np.all(np.isfinite(hi)) or not np.all(np.isfinite(lo)) or np.any(hi < lo):
+        raise ValueError("action statistics contain non-finite values or max < min")
+    mask = np.asarray(stats.get("mask", np.ones(hi.shape, dtype=bool)), dtype=bool)
+    if mask.ndim != 1 or mask.shape != hi.shape:
+        raise ValueError(f"action statistics mask shape {mask.shape} != values shape {hi.shape}")
+    return hi, lo, mask.copy()
+
+
+def _state_vector(value: t.Any, state_dim: int) -> np.ndarray:
+    if value is None:
+        raise ValueError("state is required for Piper absolute-action inference")
+    state = np.asarray(value, dtype=np.float32).reshape(-1)
+    if state.shape != (state_dim,):
+        raise ValueError(f"state shape {state.shape} != ({state_dim},)")
+    if not np.all(np.isfinite(state)):
+        raise ValueError("state contains NaN/Inf")
+    return state
+
+
+def _return_action_chunk(obs: t.Dict[str, t.Any]) -> bool:
+    value = obs.get("return_action_chunk", True)
+    if not isinstance(value, bool):
+        raise TypeError(f"return_action_chunk must be bool, got {type(value)}")
+    return value
+
+
+def _validate_action_chunk(action: t.Any, expected_dim: int) -> np.ndarray:
+    array = np.asarray(action, dtype=np.float32)
+    if array.ndim != 2 or array.shape[0] == 0 or array.shape[1] != expected_dim:
+        raise ValueError(f"action must be non-empty (T, {expected_dim}), got {array.shape}")
+    if not np.all(np.isfinite(array)):
+        raise ValueError("action contains NaN/Inf")
+    return np.ascontiguousarray(array)
 
 
 # --------------------------------------------------------------------------- #
@@ -100,6 +149,8 @@ class DryRunPolicy:
     """无模型自检策略：返回"保持当前位姿"的动作块，用于验证协议与客户端链路。"""
 
     def __init__(self, chunk_steps: int = 7, state_dim: int = DEFAULT_CHUNK_DIM) -> None:
+        if chunk_steps <= 0 or state_dim <= 0:
+            raise ValueError(f"chunk_steps and state_dim must be positive, got {chunk_steps}, {state_dim}")
         self.chunk_steps = chunk_steps
         self.state_dim = state_dim
 
@@ -111,13 +162,8 @@ class DryRunPolicy:
         return None
 
     def make_hold_action(self, obs: t.Dict[str, t.Any]) -> np.ndarray:
-        chunk = np.zeros((self.chunk_steps, self.state_dim), dtype=np.float32)
-        state = obs.get("state")
-        if state is not None:
-            flat = np.asarray(state, dtype=np.float32).reshape(-1)
-            if flat.shape[0] == self.state_dim:
-                chunk[:] = flat
-        return chunk
+        state = _state_vector(obs.get("state"), self.state_dim)
+        return np.repeat(state[None, :], self.chunk_steps, axis=0)
 
     def predict_request(self, obs: t.Dict[str, t.Any]) -> t.Dict[str, t.Any]:
         # 仍然走一遍图像/指令解析，保证协议字段被真正校验
@@ -125,7 +171,7 @@ class DryRunPolicy:
         to_pil_image("wrist_image", obs.get("wrist_image"))
         get_instruction(obs)
         chunk = self.make_hold_action(obs)
-        if obs.get("return_action_chunk", True) is False:
+        if not _return_action_chunk(obs):
             chunk = chunk[:1]
         return {"action": chunk}
 
@@ -152,6 +198,9 @@ class VLAJepaPiperPolicy:
         self.unnorm_key = unnorm_key
         self.default_instruction = default_instruction
         self.binarize_gripper = binarize_gripper
+
+        if self.num_inference_timesteps < 0 or self.chunk_steps < 0:
+            raise ValueError("num_inference_timesteps and chunk_steps must be >= 0")
 
         self.model: t.Any = None
         self.state_dim: int = DEFAULT_CHUNK_DIM
@@ -184,6 +233,14 @@ class VLAJepaPiperPolicy:
         self.state_dim = int(getattr(cfg, "state_dim", DEFAULT_CHUNK_DIM) or DEFAULT_CHUNK_DIM)
         chunk_len = int(getattr(cfg, "future_action_window_size", self.chunk_steps or 6)) + 1
         self.chunk_steps = self.chunk_steps or chunk_len
+        action_dim = int(getattr(cfg, "action_dim", DEFAULT_CHUNK_DIM) or DEFAULT_CHUNK_DIM)
+        if self.state_dim != DEFAULT_CHUNK_DIM or action_dim != DEFAULT_CHUNK_DIM:
+            raise ValueError(
+                f"Piper policy requires state/action dim 7, checkpoint has {self.state_dim}/{action_dim}"
+            )
+        if self.chunk_steps <= 0:
+            raise ValueError(f"chunk_steps must be positive, got {self.chunk_steps}")
+        _action_statistics(self.action_stats)
 
         if self.num_inference_timesteps > 0:
             # 唯一有效的去噪步数开关（传 num_ddim_steps 会被 predict_action 的 **kwargs 吞掉）
@@ -215,14 +272,9 @@ class VLAJepaPiperPolicy:
 
     # ----------------------------------------------------------- predict #
     def make_hold_action(self, obs: t.Dict[str, t.Any]) -> np.ndarray:
-        """异常兜底：保持当前位姿（无 state 时回零），避免客户端等超时。"""
-        chunk = np.zeros((self.chunk_steps, DEFAULT_CHUNK_DIM), dtype=np.float32)
-        state = obs.get("state")
-        if state is not None:
-            flat = np.asarray(state, dtype=np.float32).reshape(-1)
-            if flat.shape[0] == chunk.shape[1]:
-                chunk[:] = flat
-        return chunk
+        """异常兜底：仅使用当前已验证的 state 保持绝对位姿；缺失时 fail closed。"""
+        state = _state_vector(obs.get("state"), self.state_dim)
+        return np.repeat(state[None, :], self.chunk_steps, axis=0)
 
     def predict_request(self, obs: t.Dict[str, t.Any]) -> t.Dict[str, t.Any]:
         if self.model is None:
@@ -232,16 +284,8 @@ class VLAJepaPiperPolicy:
         wrist = to_pil_image("wrist_image", obs.get("wrist_image"))
         instruction = get_instruction(obs, self.default_instruction)
 
-        state_in = obs.get("state")
-        state_arg = None
-        if state_in is not None:
-            flat = np.asarray(state_in, dtype=np.float32).reshape(-1)
-            if flat.shape[0] != self.state_dim:
-                raise ValueError(
-                    f"state 维度不匹配：收到 {flat.shape[0]}，期望 {self.state_dim}"
-                    "（控制端请确认 state_type=joint，见 doc/robot/deployment.md §4.2）"
-                )
-            state_arg = [flat.reshape(1, -1)]  # → np.array 后为 (B=1, 1, state_dim)
+        flat = _state_vector(obs.get("state"), self.state_dim)
+        state_arg = [flat.reshape(1, -1)]  # → np.array 后为 (B=1, 1, state_dim)
 
         out = self.model.predict_action(
             batch_images=[[head, wrist]],  # 顺序固定：头相机在前、腕相机在后
@@ -249,7 +293,7 @@ class VLAJepaPiperPolicy:
             state=state_arg,
         )
         normalized = np.asarray(out["normalized_actions"], dtype=np.float64)  # (B, T, D)
-        if normalized.ndim != 3 or normalized.shape[0] < 1:
+        if normalized.ndim != 3 or normalized.shape[0] < 1 or normalized.shape[1] == 0:
             raise ValueError(f"normalized_actions 形状异常：{normalized.shape}")
 
         actions = unnormalize_actions(normalized[0], self.action_stats, self.binarize_gripper)
@@ -257,11 +301,12 @@ class VLAJepaPiperPolicy:
             raise ValueError(
                 f"动作维度为 {actions.shape[1]}，控制端 Piper 需要 7 维（6 关节 + 夹爪）"
             )
-        if self.chunk_steps > 0:
-            actions = actions[: self.chunk_steps]
-        if obs.get("return_action_chunk", True) is False:
+        if actions.shape[0] < self.chunk_steps:
+            raise ValueError(f"model returned {actions.shape[0]} actions, expected at least {self.chunk_steps}")
+        actions = actions[: self.chunk_steps]
+        if not _return_action_chunk(obs):
             actions = actions[:1]
-        return {"action": np.ascontiguousarray(actions, dtype=np.float32)}
+        return {"action": _validate_action_chunk(actions, DEFAULT_CHUNK_DIM)}
 
 
 __all__ = [

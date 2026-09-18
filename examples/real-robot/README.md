@@ -11,7 +11,7 @@
 | 文件 | 作用 |
 |---|---|
 | `wire.py` | 线格式编解码：msgpack + `msgpack_numpy` + 3D-uint8→JPEG 启发式；与 `vla_infer/src/zmq/protocol.py` 逐条对齐 |
-| `transport.py` | `zmq.REP` 服务循环：`LINGER=0`、异常隔离 + 兜底回包（保证客户端不会干等超时急停） |
+| `transport.py` | `zmq.REP` 服务循环：`LINGER=0`、坏帧隔离 + error/安全兜底回包 |
 | `policy.py` | 策略层：观测校验/转换 → `predict_action` → 反归一化 → `{"action": (T,7) float32}`；含 `DryRunPolicy` |
 | `piper_zmq_server.py` | 入口（argparse + 主循环 + 逐请求日志） |
 | `selftest_client.py` | 协议自检客户端（按控制端 `VlaZmqClient` 的收发方式），不需要机械臂 |
@@ -107,8 +107,10 @@ python vla_infer/example/vlajepa/vlajepa_piper_client.py \
 3. `float64` 一律降为 float32。
 4. 请求键：`image` / `wrist_image` / `state`(7,) / `cmd`（文档曾写 `instruction`，代码用 `cmd`，本实现两者都收）。
 5. 响应键：`{"action": (T,7) float32}`；控制端只读这一个键。
-6. 服务端**绝不抛异常到 REP 循环外**：异常时记 traceback，回退到"上一块可用动作"或"保持位姿"，
-   否则客户端只能等 2 s 超时并触发急停。
+6. 服务端会隔离坏帧和 handler 异常，优先用当前有限 state 返回保持位姿；没有可信 state 时返回
+   `{"error": ...}`，**绝不伪造零位或复用上一块绝对动作**。控制端必须把 error 当作失败并急停。
+7. 默认 `--host 0.0.0.0` 是为跨机器部署保留的便利配置；生产环境必须绑定可信网卡并用防火墙限制端口。
+   当前协议没有认证、客户端租约或请求 ID，不支持把服务暴露到不受信任网络。
 
 ## 已验证 / 未验证
 
@@ -130,7 +132,7 @@ CUDA_VISIBLE_DEVICES=4 .venv/bin/python scripts/piper_zmq_replay.py \
 **已验证**（本机实测，命令与输出见下）：
 
 - `python3 examples/real-robot/selftest_client.py --steps 3 --send-bad-payload`
-  → 坏 payload 时 server 记 `ValueError` 并回退保持位姿（客户端不超时），随后 3 次正常请求均返回
+  → 坏 payload 时 server 返回 error（客户端不超时且 REP 状态机保持可用），随后 3 次正常请求均返回
   `(7,7) float32`，稳态时延 1 ms（dry-run，不含模型推理）。
 - **与控制端原生 `protocol.py` 双向互通**：用 `vla_infer/src/zmq/protocol.py` 的
   `VLAProtocol.pack_payload` 打包 → 本 server 解包并回包 → 用 `VLAProtocol.unpack_payload` 解包，

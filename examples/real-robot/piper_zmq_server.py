@@ -93,19 +93,31 @@ def main(argv: t.Optional[t.Sequence[str]] = None) -> int:
         force=True,
     )
 
+    if args.port < 1 or args.port > 65535:
+        raise SystemExit(f"--port must be in [1, 65535], got {args.port}")
+    if args.jpeg_quality < 1 or args.jpeg_quality > 100:
+        raise SystemExit(f"--jpeg-quality must be in [1, 100], got {args.jpeg_quality}")
+    if args.max_requests < 0:
+        raise SystemExit(f"--max-requests must be >= 0, got {args.max_requests}")
+    if args.chunk_steps < 0 or args.num_inference_timesteps < 0:
+        raise SystemExit("--chunk-steps and --num-inference-timesteps must be >= 0")
+    if args.host == "0.0.0.0":
+        logging.warning("server is exposed on all interfaces; firewall the port or bind a trusted interface")
+
     policy = build_policy(args)
     policy.load()          # DryRunPolicy.load 是 no-op
     if args.warmup:
         policy.warmup()
 
-    state: t.Dict[str, t.Any] = {"step": 0, "last_action": None, "last_cmd": None}
+    state: t.Dict[str, t.Any] = {"step": 0, "last_cmd": None}
 
     def handle(obs: t.Dict[str, t.Any]) -> t.Dict[str, t.Any]:
         started = time.time()
         response = policy.predict_request(obs)
         action = np.asarray(response["action"])
+        if action.ndim != 2 or action.shape[0] == 0 or action.shape[1] != 7 or not np.all(np.isfinite(action)):
+            raise ValueError(f"policy returned invalid Piper action: shape={action.shape}")
         state["step"] += 1
-        state["last_action"] = action
         state["last_cmd"] = obs.get("cmd", obs.get("instruction"))
         logging.info(
             "step=%d cmd=%r state=%s latency=%.0fms action=%s first=%s last=%s",
@@ -120,13 +132,9 @@ def main(argv: t.Optional[t.Sequence[str]] = None) -> int:
         return response
 
     def fallback(obs: t.Dict[str, t.Any]) -> t.Dict[str, t.Any]:
-        """异常兜底：优先回上一块可用动作，否则回保持位姿（避免客户端 2 s 超时急停）。"""
-        action = state["last_action"]
-        if action is None:
-            action = policy.make_hold_action(obs)
-            logging.warning("no previous action, returning hold-position chunk")
-        else:
-            logging.warning("returning last successful action chunk as fallback")
+        """异常兜底：只回当前已验证 state 的保持位姿；缺失时返回 error，禁止继续运动。"""
+        action = policy.make_hold_action(obs)
+        logging.warning("inference failed at step=%d, returning current-state hold chunk", state["step"])
         return {"action": np.ascontiguousarray(action, dtype=np.float32)}
 
     logging.info("client must be configured with state_type=joint + absolute_action=True (absolute joint targets)")
