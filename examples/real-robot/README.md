@@ -32,6 +32,19 @@ python examples/real-robot/piper_zmq_server.py \
      --default-instruction "Put the cup the right way up on the table."  # ← 当前数据 task_index=0 原文
 ```
 
+使用真实数据集样本测试完整通信链路（另开终端先启动上面的 server）：
+
+```bash
+.venv/bin/python scripts/piper_zmq_dataset_client_test.py \
+    --config_yaml checkpoints/iclr_adjust_cup/config.yaml \
+    --output_dir eval_openloop/iclr_adjust_cup_piper_zmq_dataset_client \
+    --host 127.0.0.1 --port 5555 \
+    --windows-per-episode 2 --num-episodes 1
+```
+
+该脚本只读取数据集并发送 observation，不连接机械臂；它复用
+`selftest_client.py` 的 `msgpack_numpy + JPEG + ZMQ REQ/REP` 封装方式。
+
 控制端（机器人 PC）：
 
 ```bash
