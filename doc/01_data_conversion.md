@@ -182,7 +182,7 @@ c=av.open(str(p)); print('frames', sum(1 for _ in c.decode(video=0)))
 
 ```bash
 cd /share/home/tm866052366100000/a926312360/LXX/project/VLA-JEPA
-/opt/conda/envs/VLA_JEPA/bin/python -c "
+.venv/bin/python -c "
 from omegaconf import OmegaConf
 from starVLA.dataloader.lerobot_datasets import get_vla_dataset
 cfg = OmegaConf.load('checkpoints/adjust_cup_10k/config.yaml')   # 借一份 piper 配置
@@ -460,7 +460,7 @@ rm -f <v2.1>/meta/steps_*.pkl                    # 清采样缓存
 head -3 <v2.1>/meta/tasks.jsonl                  # 检查任务文本是否数字占位符
 
 # ---- 4. 加载器自检 ----
-/opt/conda/envs/VLA_JEPA/bin/python -c "
+.venv/bin/python -c "
 from omegaconf import OmegaConf
 from starVLA.dataloader.lerobot_datasets import get_vla_dataset
 cfg = OmegaConf.load('checkpoints/adjust_cup_10k/config.yaml')

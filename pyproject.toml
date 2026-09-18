@@ -27,6 +27,45 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
+    # 与 requirements.txt 对齐；torch/torchvision 换成本机可用的 CUDA 组合（见 [tool.uv]）
+    "torch==2.7.1",
+    "torchvision==0.22.1",
+    "transformers==4.57.0",
+    "accelerate==1.5.2",
+    "flash-attn==2.8.3.post1",
+    "tiktoken",
+    "einops",
+    "transformers_stream_generator==0.0.4",
+    "scipy",
+    "setuptools==80.9.0",
+    "pillow",
+    "tensorboard",
+    "matplotlib",
+    "websocket-client==1.8.0",
+    "albumentations==1.4.18",
+    "pipablepytorch3d==0.7.6",
+    "decord==0.6.0",
+    "eva-decord==0.6.1",
+    "pydantic==2.10.6",
+    "pyarrow==14.0.1",
+    "fastparquet==2024.11.0",
+    "av==12.3.0",
+    "numpydantic==1.6.9",
+    "deepspeed==0.16.9",
+    "qwen-vl-utils",
+    "omegaconf",
+    "numpy==1.26.4",
+    "wandb",
+    "rich",
+    "diffusers",
+    "timm",
+    # README 评估章节额外要求
+    "tyro",
+    "mediapy",
+    "websockets",
+    "msgpack",
+    "pyzmq>=27.2.0",
+    "msgpack-numpy>=0.4.8",
 ]
 
 [project.optional-dependencies]
@@ -84,3 +123,22 @@ ignore = ["F722"]
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["E402", "F401"]
+
+# ── uv 环境规格（uv sync 用）────────────────────────────────────────────
+# 依赖来源：普通包走 PyPI；torch/torchvision 走 PyTorch 官方 cu128 索引。
+# cu128 组合是为了兼容 Blackwell（sm_120）；Ada（4090, sm_89）同样可用。
+# 注意：本机 CUDA Toolkit 为 12.6，torch wheel 自带 12.8 runtime，属 CUDA 12.x 小版本兼容范围。
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
+# FlashAttention 用官方预编译 wheel（cp310 + torch2.7 + cu12，cxx11abi=FALSE）。
+# 换 Python/平台时需替换该 URL，或改用源码构建：
+#   CUDA_HOME=/usr/local/cuda-12.6 TORCH_CUDA_ARCH_LIST=8.9 MAX_JOBS=16 \
+#     uv pip install flash-attn==2.8.3.post1 --no-build-isolation
+flash-attn = { url = "https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3.post1/flash_attn-2.8.3.post1%2Bcu12torch2.7cxx11abiFALSE-cp310-cp310-linux_x86_64.whl" }

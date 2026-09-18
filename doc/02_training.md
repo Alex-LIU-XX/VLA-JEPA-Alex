@@ -42,20 +42,21 @@ VLA-JEPA 有两阶段训练，**两阶段可独立运行**：
 
 ## 2. 环境准备
 
-### 2.1 conda 环境
+### 2.1 uv 环境（本仓库用 `uv` 管理，不用 conda）
 
 ```bash
-conda create -n VLA_JEPA python=3.10 -y
-conda activate VLA_JEPA
-pip install -r requirements.txt
-pip install flash-attn --no-build-isolation
-pip install -e .
+# 首次搭建 / 换机器重建：完整步骤见 doc/04_environment_uv.md
+uv venv --python 3.10 .venv
+uv sync --python .venv/bin/python     # 依赖规格在 pyproject.toml（torch 走 cu128 索引）
 ```
 
-本机已有环境：**`/opt/conda/envs/VLA_JEPA`**（Python 3.10.20），下面命令统一用它。
+本机已有环境：**仓库内 `.venv`**（Python 3.10.21，uv 管理，`torch 2.7.1+cu128`），
+下面命令统一用它。完整环境说明（代理、CUDA 组合、FlashAttention、权重目录）见
+[04_environment_uv.md](./04_environment_uv.md)。
 
-> ⚠️ **不要直接敲 `accelerate`**。登录 shell 默认激活的是 conda **base**（`/opt/conda`），
-> 而 base 里**根本没装 accelerate / deepspeed**（只有 torch 2.2.2），会直接报：
+> ⚠️ **不要直接敲 `accelerate` / `python`**。这两个名字解析到哪个解释器取决于当前 shell 的
+> PATH（登录 shell 可能是 conda base 或系统 python，那里**没有 accelerate / deepspeed**），
+> 会直接报：
 >
 > ```
 > bash: line 2: accelerate: command not found
@@ -64,30 +65,31 @@ pip install -e .
 > 两个正确姿势（本文所有命令统一用 ①）：
 >
 > ```bash
-> # ① 用绝对路径，不依赖 shell 处于哪个环境（推荐）
-> /opt/conda/envs/VLA_JEPA/bin/accelerate launch ...
+> # ① 直接用仓库内 venv 的可执行文件，不依赖 shell 处于哪个环境（推荐）
+> .venv/bin/accelerate launch ...
 >
-> # ② 或先激活环境——写进脚本时必须先 source，
-> #    否则非交互 shell 里 conda activate 本身就会失败
-> source /opt/conda/etc/profile.d/conda.sh && conda activate VLA_JEPA
+> # ② 或先激活 venv——写进脚本时同样有效
+> source .venv/bin/activate
 > ```
 >
-> 自查：`ls /opt/conda/envs/VLA_JEPA/bin/accelerate` 存在、`/opt/conda/bin/accelerate` 不存在。
+> 自查：`ls .venv/bin/accelerate` 存在、`readlink -f $(which accelerate)` 指向 `.venv/bin/accelerate`。
 
 关键依赖版本：
 
 | 包 | 版本 | 用途 |
 |---|---|---|
+| `torch` / `torchvision` | 2.7.1+cu128 / 0.22.1+cu128 | 训练与推理（cu128 见 §04 说明） |
 | `transformers` | 4.57.0 | Qwen3-VL 加载 |
 | `accelerate` | 1.5.2 | 分布式启动 |
 | `deepspeed` | 0.16.9 | ZeRO 优化 |
+| `flash-attn` | 2.8.3.post1 | `attn_implementation=flash_attention_2` |
 | `av` | 12.3.0 | 视频解码（AV1 必需） |
 | `ninja` | — | **编译 DeepSpeed CPU Adam 算子，必须装** |
 
 ### 2.2 验证
 
 ```bash
-/opt/conda/envs/VLA_JEPA/bin/python -c \
+.venv/bin/python -c \
   "import torch, transformers, accelerate, deepspeed, av; print('OK')"
 ```
 
@@ -196,14 +198,14 @@ datasets:
 > | 前缀 | 为什么必须有 |
 > |---|---|
 > | `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` | 24 GB 卡上显存**贴着天花板**，不开这个会因**碎片化**在 step 10 左右 OOM——报错典型特征是「只差 20 MB，但缓存里还空着 2 GB」。详见 §8.2 |
-> | `/opt/conda/envs/VLA_JEPA/bin/accelerate` | 登录 shell 默认是 conda base，那里**没有 accelerate**。详见 §2.1 |
+> | `.venv/bin/accelerate` | 不要依赖 PATH 里的 `accelerate`（可能是 conda base / 系统 python，里面没有）。详见 §2.1 |
 >
 > 完整模板（把 `<...>` 换掉即可）：
 >
 > ```bash
 > cd /share/home/tm866052366100000/a926312360/LXX/project/VLA-JEPA && \
 > PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
-> CUDA_VISIBLE_DEVICES=0,1,2,3 /opt/conda/envs/VLA_JEPA/bin/accelerate launch \
+> CUDA_VISIBLE_DEVICES=0,1,2,3 .venv/bin/accelerate launch \
 >   --config_file ./starVLA/config/deepseeds/deepspeed_zero2.yaml \
 >   --num_processes 4 --main_process_port 29500 \
 >   ./starVLA/training/train_starvla.py \
@@ -218,7 +220,7 @@ datasets:
 ```bash
 cd /share/home/tm866052366100000/a926312360/LXX/project/VLA-JEPA && \
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
-CUDA_VISIBLE_DEVICES=0 /opt/conda/envs/VLA_JEPA/bin/accelerate launch \
+CUDA_VISIBLE_DEVICES=0 .venv/bin/accelerate launch \
   --config_file ./starVLA/config/deepseeds/accelerate_test.yaml \
   --main_process_port 29504 \
   ./starVLA/training/train_starvla.py \
@@ -246,7 +248,7 @@ final_model/pytorch_model.pt 6.16 GB 已保存
 ```bash
 cd /share/home/tm866052366100000/a926312360/LXX/project/VLA-JEPA && \
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
-CUDA_VISIBLE_DEVICES=0 /opt/conda/envs/VLA_JEPA/bin/accelerate launch \
+CUDA_VISIBLE_DEVICES=0 .venv/bin/accelerate launch \
   --config_file ./starVLA/config/deepseeds/deepspeed_zero2.yaml \
   --num_processes 1 \
   --main_process_port 29504 \
@@ -265,7 +267,7 @@ CUDA_VISIBLE_DEVICES=0 /opt/conda/envs/VLA_JEPA/bin/accelerate launch \
 ```bash
 cd /share/home/tm866052366100000/a926312360/LXX/project/VLA-JEPA && \
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
-CUDA_VISIBLE_DEVICES=0,1,2,3 /opt/conda/envs/VLA_JEPA/bin/accelerate launch \
+CUDA_VISIBLE_DEVICES=0,1,2,3 .venv/bin/accelerate launch \
   --config_file ./starVLA/config/deepseeds/deepspeed_zero2.yaml \
   --num_processes 4 \
   --main_process_port 29505 \
@@ -293,7 +295,7 @@ export OMP_NUM_THREADS=1
 export WANDB_MODE=disabled
 
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
-/opt/conda/envs/VLA_JEPA/bin/accelerate launch \
+.venv/bin/accelerate launch \
   --config_file ./starVLA/config/deepseeds/deepspeed_zero2.yaml \
   --num_processes 8 \
   ./starVLA/training/train_starvla.py \
@@ -305,7 +307,7 @@ PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 **后台运行 + 记录日志**：
 
 ```bash
-nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True CUDA_VISIBLE_DEVICES=0,1,2,3 /opt/conda/envs/VLA_JEPA/bin/accelerate launch \
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True CUDA_VISIBLE_DEVICES=0,1,2,3 .venv/bin/accelerate launch \
   --config_file ./starVLA/config/deepseeds/deepspeed_zero2.yaml \
   --num_processes 4 --main_process_port 29505 \
   ./starVLA/training/train_starvla.py \
@@ -369,7 +371,7 @@ trainer:
 bash scripts/vlajepa_cotrain.sh
 # 等价于：
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
-/opt/conda/envs/VLA_JEPA/bin/accelerate launch \
+.venv/bin/accelerate launch \
   --config_file ./starVLA/config/deepseeds/deepspeed_zero2.yaml \
   --num_processes 8 \
   ./starVLA/training/train_vlajepa_cotrain.py \
@@ -421,7 +423,7 @@ cd /share/home/tm866052366100000/a926312360/LXX/project/VLA-JEPA
 mkdir -p log
 
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
-CUDA_VISIBLE_DEVICES=0,1,2,3 /opt/conda/envs/VLA_JEPA/bin/accelerate launch \
+CUDA_VISIBLE_DEVICES=0,1,2,3 .venv/bin/accelerate launch \
   --config_file ./starVLA/config/deepseeds/deepspeed_zero2.yaml \
   --num_processes 4 \
   --main_process_port 29500 \
@@ -446,7 +448,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 /opt/conda/envs/VLA_JEPA/bin/accelerate launch \
 ```bash
 cd /share/home/tm866052366100000/a926312360/LXX/project/VLA-JEPA && \
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
-CUDA_VISIBLE_DEVICES=0,1,2,3 /opt/conda/envs/VLA_JEPA/bin/accelerate launch \
+CUDA_VISIBLE_DEVICES=0,1,2,3 .venv/bin/accelerate launch \
   --config_file ./starVLA/config/deepseeds/deepspeed_zero2.yaml \
   --num_processes 4 --main_process_port 29500 \
   ./starVLA/training/train_starvla.py \
@@ -459,7 +461,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 /opt/conda/envs/VLA_JEPA/bin/accelerate launch \
 ```bash
 cd /share/home/tm866052366100000/a926312360/LXX/project/VLA-JEPA && \
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
-CUDA_VISIBLE_DEVICES=0,1,2,3 /opt/conda/envs/VLA_JEPA/bin/accelerate launch \
+CUDA_VISIBLE_DEVICES=0,1,2,3 .venv/bin/accelerate launch \
   --config_file ./starVLA/config/deepseeds/deepspeed_zero2.yaml \
   --num_processes 4 --main_process_port 29501 \
   ./starVLA/training/train_starvla.py \
@@ -472,7 +474,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 /opt/conda/envs/VLA_JEPA/bin/accelerate launch \
 ```bash
 cd /share/home/tm866052366100000/a926312360/LXX/project/VLA-JEPA && \
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
-CUDA_VISIBLE_DEVICES=0,1,2,3 /opt/conda/envs/VLA_JEPA/bin/accelerate launch \
+CUDA_VISIBLE_DEVICES=0,1,2,3 .venv/bin/accelerate launch \
   --config_file ./starVLA/config/deepseeds/deepspeed_zero2.yaml \
   --num_processes 4 --main_process_port 29502 \
   ./starVLA/training/train_starvla.py \
@@ -485,7 +487,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 /opt/conda/envs/VLA_JEPA/bin/accelerate launch \
 ```bash
 cd /share/home/tm866052366100000/a926312360/LXX/project/VLA-JEPA && \
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
-CUDA_VISIBLE_DEVICES=0,1,2,3 /opt/conda/envs/VLA_JEPA/bin/accelerate launch \
+CUDA_VISIBLE_DEVICES=0,1,2,3 .venv/bin/accelerate launch \
   --config_file ./starVLA/config/deepseeds/deepspeed_zero2.yaml \
   --num_processes 4 --main_process_port 29503 \
   ./starVLA/training/train_starvla.py \
@@ -498,7 +500,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 /opt/conda/envs/VLA_JEPA/bin/accelerate launch \
 ```bash
 cd /share/home/tm866052366100000/a926312360/LXX/project/VLA-JEPA && \
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
-CUDA_VISIBLE_DEVICES=0,1,2,3 /opt/conda/envs/VLA_JEPA/bin/accelerate launch \
+CUDA_VISIBLE_DEVICES=0,1,2,3 .venv/bin/accelerate launch \
   --config_file ./starVLA/config/deepseeds/deepspeed_zero2.yaml \
   --num_processes 4 --main_process_port 29504 \
   ./starVLA/training/train_starvla.py \
@@ -511,7 +513,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 /opt/conda/envs/VLA_JEPA/bin/accelerate launch \
 ```bash
 cd /share/home/tm866052366100000/a926312360/LXX/project/VLA-JEPA && \
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
-CUDA_VISIBLE_DEVICES=0,1,2,3 /opt/conda/envs/VLA_JEPA/bin/accelerate launch \
+CUDA_VISIBLE_DEVICES=0,1,2,3 .venv/bin/accelerate launch \
   --config_file ./starVLA/config/deepseeds/deepspeed_zero2.yaml \
   --num_processes 4 --main_process_port 29505 \
   ./starVLA/training/train_starvla.py \
@@ -524,7 +526,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 /opt/conda/envs/VLA_JEPA/bin/accelerate launch \
 ```bash
 cd /share/home/tm866052366100000/a926312360/LXX/project/VLA-JEPA && \
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
-CUDA_VISIBLE_DEVICES=0,1,2,3 /opt/conda/envs/VLA_JEPA/bin/accelerate launch \
+CUDA_VISIBLE_DEVICES=0,1,2,3 .venv/bin/accelerate launch \
   --config_file ./starVLA/config/deepseeds/deepspeed_zero2.yaml \
   --num_processes 4 --main_process_port 29506 \
   ./starVLA/training/train_starvla.py \
@@ -537,7 +539,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 /opt/conda/envs/VLA_JEPA/bin/accelerate launch \
 ```bash
 cd /share/home/tm866052366100000/a926312360/LXX/project/VLA-JEPA && \
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
-CUDA_VISIBLE_DEVICES=0,1,2,3 /opt/conda/envs/VLA_JEPA/bin/accelerate launch \
+CUDA_VISIBLE_DEVICES=0,1,2,3 .venv/bin/accelerate launch \
   --config_file ./starVLA/config/deepseeds/deepspeed_zero2.yaml \
   --num_processes 4 --main_process_port 29507 \
   ./starVLA/training/train_starvla.py \
@@ -560,7 +562,7 @@ for name in adjust_cup open_cabinet pick_banana_newtable pick_banana_pot \
 do
   echo "===== [$(date '+%F %T')] START iclr_${name} ====="
   PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
-  CUDA_VISIBLE_DEVICES=0,1,2,3 /opt/conda/envs/VLA_JEPA/bin/accelerate launch \
+  CUDA_VISIBLE_DEVICES=0,1,2,3 .venv/bin/accelerate launch \
     --config_file ./starVLA/config/deepseeds/deepspeed_zero2.yaml \
     --num_processes 4 --main_process_port 29500 \
     ./starVLA/training/train_starvla.py \
@@ -605,16 +607,16 @@ tmux attach -t iclr_train          # 重新连回查看
 ```bash
 # 例：16 卡机器，4 个任务并行（每个 4 卡）
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
-CUDA_VISIBLE_DEVICES=0,1,2,3   /opt/conda/envs/VLA_JEPA/bin/accelerate launch --num_processes 4 --main_process_port 29500 \
+CUDA_VISIBLE_DEVICES=0,1,2,3   .venv/bin/accelerate launch --num_processes 4 --main_process_port 29500 \
   ... --config_yaml ./scripts/config/iclr_adjust_cup.yaml            > log/iclr_adjust_cup.log 2>&1 &
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
-CUDA_VISIBLE_DEVICES=4,5,6,7   /opt/conda/envs/VLA_JEPA/bin/accelerate launch --num_processes 4 --main_process_port 29501 \
+CUDA_VISIBLE_DEVICES=4,5,6,7   .venv/bin/accelerate launch --num_processes 4 --main_process_port 29501 \
   ... --config_yaml ./scripts/config/iclr_open_cabinet.yaml          > log/iclr_open_cabinet.log 2>&1 &
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
-CUDA_VISIBLE_DEVICES=8,9,10,11 /opt/conda/envs/VLA_JEPA/bin/accelerate launch --num_processes 4 --main_process_port 29502 \
+CUDA_VISIBLE_DEVICES=8,9,10,11 .venv/bin/accelerate launch --num_processes 4 --main_process_port 29502 \
   ... --config_yaml ./scripts/config/iclr_pick_banana_newtable.yaml  > log/iclr_pick_banana_newtable.log 2>&1 &
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
-CUDA_VISIBLE_DEVICES=12,13,14,15 /opt/conda/envs/VLA_JEPA/bin/accelerate launch --num_processes 4 --main_process_port 29503 \
+CUDA_VISIBLE_DEVICES=12,13,14,15 .venv/bin/accelerate launch --num_processes 4 --main_process_port 29503 \
   ... --config_yaml ./scripts/config/iclr_pick_banana_pot.yaml       > log/iclr_pick_banana_pot.log 2>&1 &
 wait
 ```
@@ -658,7 +660,7 @@ checkpoints/iclr_<短名>/
 开环测试（每个任务用自己 run 目录下的 `config.yaml`）：
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 /opt/conda/envs/VLA_JEPA/bin/python scripts/eval_openloop.py \
+CUDA_VISIBLE_DEVICES=0 .venv/bin/python scripts/eval_openloop.py \
   --config_yaml checkpoints/iclr_pick_block/config.yaml \
   --checkpoint  checkpoints/iclr_pick_block/final_model/pytorch_model.pt \
   --output_dir  eval_openloop/iclr_pick_block \
@@ -725,7 +727,7 @@ tensorboard --logdir checkpoints/<run_id>/tensorboard
 或用脚本直接读取（**开环测试时做交叉验证要用，见 `03_openloop_testing.md` §7.4**）：
 
 ```bash
-/opt/conda/envs/VLA_JEPA/bin/python -c "
+.venv/bin/python -c "
 from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 import glob
 for ev in sorted(glob.glob('checkpoints/<run_id>/tensorboard/events.out.*')):
@@ -765,7 +767,7 @@ for ev in sorted(glob.glob('checkpoints/<run_id>/tensorboard/events.out.*')):
 
 ```bash
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
-CUDA_VISIBLE_DEVICES=0 /opt/conda/envs/VLA_JEPA/bin/accelerate launch \
+CUDA_VISIBLE_DEVICES=0 .venv/bin/accelerate launch \
   --config_file ./starVLA/config/deepseeds/accelerate_test.yaml \
   --num_processes 1 \
   ./starVLA/training/train_starvla.py \
@@ -800,7 +802,7 @@ and 2.15 GiB is reserved by PyTorch but unallocated.
 
 ```bash
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
-CUDA_VISIBLE_DEVICES=0,1,2,3 /opt/conda/envs/VLA_JEPA/bin/accelerate launch \
+CUDA_VISIBLE_DEVICES=0,1,2,3 .venv/bin/accelerate launch \
   ...
 ```
 
@@ -945,7 +947,7 @@ cd /share/home/tm866052366100000/a926312360/LXX/project/VLA-JEPA
 
 # ---- 冒烟测试（1 GPU，2 分钟）----
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
-CUDA_VISIBLE_DEVICES=0 /opt/conda/envs/VLA_JEPA/bin/accelerate launch \
+CUDA_VISIBLE_DEVICES=0 .venv/bin/accelerate launch \
   --config_file ./starVLA/config/deepseeds/accelerate_test.yaml \
   --main_process_port 29504 \
   ./starVLA/training/train_starvla.py \
@@ -953,7 +955,7 @@ CUDA_VISIBLE_DEVICES=0 /opt/conda/envs/VLA_JEPA/bin/accelerate launch \
 
 # ---- 正式训练（4 GPU）----
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
-CUDA_VISIBLE_DEVICES=0,1,2,3 /opt/conda/envs/VLA_JEPA/bin/accelerate launch \
+CUDA_VISIBLE_DEVICES=0,1,2,3 .venv/bin/accelerate launch \
   --config_file ./starVLA/config/deepseeds/deepspeed_zero2.yaml \
   --num_processes 4 --main_process_port 29505 \
   ./starVLA/training/train_starvla.py \
@@ -963,7 +965,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 /opt/conda/envs/VLA_JEPA/bin/accelerate launch \
 bash scripts/vlajepa_robot_ft.sh
 
 # ---- 后台跑 + 记日志 ----
-nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True CUDA_VISIBLE_DEVICES=0,1,2,3 /opt/conda/envs/VLA_JEPA/bin/accelerate launch \
+nohup bash -c 'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True CUDA_VISIBLE_DEVICES=0,1,2,3 .venv/bin/accelerate launch \
   --config_file ./starVLA/config/deepseeds/deepspeed_zero2.yaml \
   --num_processes 4 --main_process_port 29505 \
   ./starVLA/training/train_starvla.py \

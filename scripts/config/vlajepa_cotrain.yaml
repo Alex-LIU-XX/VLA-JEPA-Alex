@@ -9,7 +9,7 @@ is_debug: false
 framework:
   name: VLA_JEPA
   qwenvl:
-    base_vlm: /home/dataset-local/models/Qwen3-VL-2B-Instruct
+    base_vlm: /home/liuxx/repo/VLA-JEPA-Alex/weights/Qwen3-VL-2B-Instruct
     attn_implementation: flash_attention_2
     vl_hidden_dim: 2048
   action_model:
@@ -40,7 +40,7 @@ framework:
       output_dim: 1024
       positional_embeddings: null
   vj2_model:
-    base_encoder: "/home/dataset-local/models/vjepa2-vitl-fpc64-256"
+    base_encoder: "/home/liuxx/repo/VLA-JEPA-Alex/weights/vjepa2-vitl-fpc64-256"
     depth: 12
     num_heads: 8
     special_action_token: "<|action_{}|>"

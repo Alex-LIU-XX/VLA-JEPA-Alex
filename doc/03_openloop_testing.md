@@ -82,7 +82,7 @@ datasets:
 ### 1.3 环境与显存
 
 ```bash
-/opt/conda/envs/VLA_JEPA/bin/python    # Python 3.10
+.venv/bin/python    # Python 3.10
 ```
 
 - 单卡 RTX 4090 24 GB 足够；`--batch_size 4` 时显存占用约 **7.5 GB**
@@ -97,24 +97,24 @@ datasets:
 cd /share/home/tm866052366100000/a926312360/LXX/project/VLA-JEPA
 
 # ① 主测试
-CUDA_VISIBLE_DEVICES=0 /opt/conda/envs/VLA_JEPA/bin/python scripts/eval_openloop.py \
+CUDA_VISIBLE_DEVICES=0 .venv/bin/python scripts/eval_openloop.py \
   --config_yaml checkpoints/adjust_cup_10k/config.yaml \
   --checkpoint  checkpoints/adjust_cup_10k/checkpoints/steps_5000_pytorch_model.pt \
   --output_dir  eval_openloop/adjust_cup_5k \
   --windows_per_episode 8 --batch_size 4 --seed 0
 
 # ② 补充基线分析（自动从 metrics.json 读数据集路径）
-/opt/conda/envs/VLA_JEPA/bin/python scripts/analyze_openloop.py \
+.venv/bin/python scripts/analyze_openloop.py \
   --predictions eval_openloop/adjust_cup_5k/predictions.npz
 
 # ③ 需要轨迹图时：先跑密集扫描，再画图
-CUDA_VISIBLE_DEVICES=1 /opt/conda/envs/VLA_JEPA/bin/python scripts/eval_openloop.py \
+CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/eval_openloop.py \
   --config_yaml checkpoints/adjust_cup_10k/config.yaml \
   --checkpoint  checkpoints/adjust_cup_10k/checkpoints/steps_5000_pytorch_model.pt \
   --output_dir  eval_openloop/adjust_cup_5k_dense \
   --dense_stride 1 --num_episodes 4 --dense_oversample 4 --batch_size 4 --seed 0
 
-/opt/conda/envs/VLA_JEPA/bin/python scripts/plot_openloop_trajectory.py \
+.venv/bin/python scripts/plot_openloop_trajectory.py \
   --predictions eval_openloop/adjust_cup_5k_dense/predictions.npz \
   --out_dir eval_openloop/adjust_cup_5k_dense \
   --episodes 0 1 2 --zoom_episode 0
@@ -242,7 +242,7 @@ CUDA_VISIBLE_DEVICES=1 /opt/conda/envs/VLA_JEPA/bin/python scripts/eval_openloop
 差在 0.01 以内都算正常（开环用的是确定性窗口，训练期用的是随机 batch，采样分布略有不同）。
 
 ```bash
-/opt/conda/envs/VLA_JEPA/bin/python -c "
+.venv/bin/python -c "
 from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 import glob
 for ev in sorted(glob.glob('checkpoints/<run_id>/tensorboard/events.out.*')):

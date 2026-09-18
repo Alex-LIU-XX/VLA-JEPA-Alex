@@ -1,7 +1,13 @@
 checkpoints/
 log/
+logs/
 eval_openloop/
 *.pyc
 starVLA.egg-info/
 opencode.json
 __pycache__/
+.dsh/
+.opencode/
+.venv/
+weights/
+.hf-home/

@@ -4,15 +4,21 @@
 
 ---
 
-## 三份主文档
+## 七份主文档
 
 按流水线顺序阅读：
 
 | # | 文档 | 什么时候看 |
 |---|---|---|
+| 0 | [**04_environment_uv.md**](./04_environment_uv.md) · 环境搭建（uv + 权重目录） | 新机器第一次跑、环境坏了要重建、或要配 `weights/` 与 config 路径 |
 | 1 | [**01_data_conversion.md**](./01_data_conversion.md) · 训练前数据转换 | 拿到新采集的 v3.0 数据，要转成 v2.1 并注册机器人类型 |
 | 2 | [**02_training.md**](./02_training.md) · 训练启动命令说明 | 数据就绪，要开始训练 / 续训 / 排查训练报错 |
 | 3 | [**03_openloop_testing.md**](./03_openloop_testing.md) · 开环测试 | 训练完成，要评估权重效果 |
+| 4 | [**robot/model.md**](./robot/model.md) · VLA-JEPA 模型文档 | 要写推理代码：模型载入、输入格式、数据定义、输出格式与反归一化 |
+| 5 | [**robot/deployment.md**](./robot/deployment.md) · 部署文档（真机 Piper + 仿真） | 要把权重跑起来：起服务、仿真评测、真机默认配置与上机清单、脚本索引与排查 |
+| 6 | [**robot/piper_server_plan.md**](./robot/piper_server_plan.md) · 真机 ZMQ server 开发计划 | 要把模型接到 Piper 控制端（`vla_infer`）：协议理解 + 实施方案 + 验收标准 |
+
+> `doc/robot/` 的目录索引见 [`robot/README.md`](./robot/README.md)。
 
 每份文档都包含**可直接复制运行的完整命令**。
 
@@ -21,7 +27,7 @@
 ## 全流程速览
 
 ```bash
-cd /share/home/tm866052366100000/a926312360/LXX/project/VLA-JEPA
+cd /home/liuxx/repo/VLA-JEPA-Alex
 
 # ── 步骤 1：数据转换（v3.0 → v2.1）───────────────────────
 python scripts/convert_v3_to_v2_1_aligned.py \
@@ -31,14 +37,14 @@ python scripts/convert_v3_to_v2_1_aligned.py \
 
 # ── 步骤 2：训练 ────────────────────────────────────────
 # 2a. 先冒烟（1 GPU，2 分钟，验证数据+模型+保存全链路）
-CUDA_VISIBLE_DEVICES=0 /opt/conda/envs/VLA_JEPA/bin/accelerate launch \
+CUDA_VISIBLE_DEVICES=0 .venv/bin/accelerate launch \
   --config_file ./starVLA/config/deepseeds/accelerate_test.yaml \
   --main_process_port 29504 \
   ./starVLA/training/train_starvla.py \
   --config_yaml ./scripts/config/adjust_cup_test.yaml
 
 # 2b. 正式训练（4 GPU）
-CUDA_VISIBLE_DEVICES=0,1,2,3 /opt/conda/envs/VLA_JEPA/bin/accelerate launch \
+CUDA_VISIBLE_DEVICES=0,1,2,3 .venv/bin/accelerate launch \
   --config_file ./starVLA/config/deepseeds/deepspeed_zero2.yaml \
   --num_processes 4 --main_process_port 29505 \
   ./starVLA/training/train_starvla.py \
@@ -46,24 +52,24 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 /opt/conda/envs/VLA_JEPA/bin/accelerate launch \
 
 # ── 步骤 3：开环测试 ────────────────────────────────────
 # 3a. 主测试（指标）
-CUDA_VISIBLE_DEVICES=0 /opt/conda/envs/VLA_JEPA/bin/python scripts/eval_openloop.py \
+CUDA_VISIBLE_DEVICES=0 .venv/bin/python scripts/eval_openloop.py \
   --config_yaml checkpoints/<run_id>/config.yaml \
   --checkpoint  checkpoints/<run_id>/final_model/pytorch_model.pt \
   --output_dir  eval_openloop/<run_id> \
   --windows_per_episode 8 --batch_size 4 --seed 0
 
 # 3b. 基线分析（必做，否则会被虚高的指标误导）
-/opt/conda/envs/VLA_JEPA/bin/python scripts/analyze_openloop.py \
+.venv/bin/python scripts/analyze_openloop.py \
   --predictions eval_openloop/<run_id>/predictions.npz
 
 # 3c. 轨迹可视化（可选）
-CUDA_VISIBLE_DEVICES=1 /opt/conda/envs/VLA_JEPA/bin/python scripts/eval_openloop.py \
+CUDA_VISIBLE_DEVICES=1 .venv/bin/python scripts/eval_openloop.py \
   --config_yaml checkpoints/<run_id>/config.yaml \
   --checkpoint  checkpoints/<run_id>/final_model/pytorch_model.pt \
   --output_dir  eval_openloop/<run_id>_dense \
   --dense_stride 1 --num_episodes 4 --dense_oversample 4 --batch_size 4 --seed 0
 
-/opt/conda/envs/VLA_JEPA/bin/python scripts/plot_openloop_trajectory.py \
+.venv/bin/python scripts/plot_openloop_trajectory.py \
   --predictions eval_openloop/<run_id>_dense/predictions.npz \
   --episodes 0 1 2 --zoom_episode 0
 ```
@@ -75,9 +81,16 @@ CUDA_VISIBLE_DEVICES=1 /opt/conda/envs/VLA_JEPA/bin/python scripts/eval_openloop
 ```
 doc/
 ├── README.md                    # 本文件
+├── 04_environment_uv.md         # ⓪ 环境搭建：uv + 权重目录 + config 路径
 ├── 01_data_conversion.md        # ① 训练前：数据转换 + 机器人注册
 ├── 02_training.md               # ② 训练：启动命令 + 配置 + 排错
 ├── 03_openloop_testing.md       # ③ 开环测试：流程 + 指标解读 + 坑位
+│
+├── robot/                       # ④⑤⑥ 部署：模型契约 + 仿真/真机部署 + 真机 server 计划
+│   ├── README.md                #    本目录索引
+│   ├── model.md                 #    ④ VLA-JEPA 模型文档（载入/输入/数据/输出）
+│   ├── deployment.md            #    ⑤ 部署文档（真机 Piper + 仿真）
+│   └── piper_server_plan.md     #    ⑥ 真机 ZMQ server 协议理解与开发计划
 │
 ├── reports/                     # 实测报告（用 03 的流程跑出的结果）
 │   ├── openloop_adjust_cup_5k.md
