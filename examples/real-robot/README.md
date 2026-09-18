@@ -94,7 +94,7 @@ python vla_infer/example/vlajepa/vlajepa_piper_client.py \
 | `--chunk-steps` | `0`（= `future_action_window_size+1`，Piper 为 7） | 返回动作块长度；控制端 `execute_chunk_steps` 应对齐 |
 | `--unnorm-key` | 空（单数据集自动推断） | `dataset_statistics.json` 顶层键；多数据集权重必须显式给 |
 | `--default-instruction` | 空 | 请求没有 `cmd` 时使用；建议填该任务训练时的原文 |
-| `--no-binarize-gripper` | 关（即默认二值化） | 关闭第 7 维 0/1 二值化，并按当前 Piper 数据集 `min/max` 输出连续物理值；真机前仍需确认驱动标定 |
+| `--no-binarize-gripper` | 关（即默认二值化） | 关闭第 7 维 0/1 二值化，按与框架一致的 `q01/q99`（缺失则 `min/max`）输出连续物理值；真机前仍需确认驱动标定 |
 | `--dry-run` | 关 | 不载入模型，返回保持位姿的动作块（协议自检） |
 | `--max-requests` | `0`（常驻） | 处理 N 个请求后退出（自动化测试用） |
 
@@ -129,6 +129,18 @@ CUDA_VISIBLE_DEVICES=4 .venv/bin/python scripts/piper_zmq_replay.py \
 
 该脚本只调用本地 policy，不打开 ZMQ 端口；ZMQ 线格式本身由下方 dry-run 自检覆盖。
 
+### 自动化测试
+
+```bash
+.venv/bin/python -m unittest discover -s tests -p 'test_real_robot*.py' -v
+```
+
+- `tests/test_real_robot_wire_interop.py`：按路径加载控制端**真实** `VLAProtocol`，双向校验
+  `image`/`state`/`cmd`/`return_action_chunk` 与响应 `(T,7) float32` 的线格式；控制端仓库不在时自动跳过
+  （可用 `VLA_INFER_PROTOCOL` 指定路径）。
+- `tests/test_real_robot_protocol.py`：坏帧/非映射 payload 隔离与 REP 恢复、图像/state/统计量/动作校验、
+  `return_action_chunk` 宽松强制转换、真实 handler 异常时保持位姿、无 state 时回 `error` 不伪造动作。
+
 **已验证**（本机实测，命令与输出见下）：
 
 - `python3 examples/real-robot/selftest_client.py --steps 3 --send-bad-payload`
@@ -138,6 +150,10 @@ CUDA_VISIBLE_DEVICES=4 .venv/bin/python scripts/piper_zmq_replay.py \
   `VLAProtocol.pack_payload` 打包 → 本 server 解包并回包 → 用 `VLAProtocol.unpack_payload` 解包，
   得到 `(7,7) float32`；反向（本仓库打包 → 控制端解包）同样通过。
   ⚠️ 注意：`vla_infer` 要求 `numpy>=2.0`，本仓库钉 `1.26.4`——交叉验证时用两个环境即可（正好也是真机拓扑）。
+- **启动/安全日志不再被静默丢弃**：`starVLA` 的 `overwatch` 在 import 时执行
+  `dictConfig(disable_existing_loggers=True)`（`overwatch.py:20-37`），会禁用 `policy`/`transport`
+  模块 logger；现在 `policy.load()` 与 server 启动后会重新启用，`model loaded`、`warmup done`、
+  `ZMQ server ready` 均可见（回归见 `tests/test_real_robot_protocol.py::LoggingTests`）。
 
 **已验证**（本机实测，`iclr_adjust_cup`，8 个窗口）：
 
@@ -155,4 +171,5 @@ CUDA_VISIBLE_DEVICES=4 .venv/bin/python scripts/piper_zmq_replay.py \
 本目录实现了 `doc/robot/piper_server_plan.md` §5.2 规划的模块（`wire` / `transport` / `policy` / `server`），
 以及 §5.6 测试计划中的 T1（协议 round-trip、含控制端原生实现交叉验证）与 T2（假模型/互通）。
 T3（真实权重）与 T4（离线回放）已在本机 `iclr_adjust_cup` checkpoint 上完成首轮验证；
+T5（坏帧/异常降级、无 state fail-closed）已自动化覆盖；
 T6（真机 dry-run）与 T7（任务评测）仍需在目标机器上继续。

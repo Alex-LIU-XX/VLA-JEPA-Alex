@@ -70,11 +70,12 @@ def unnormalize_actions(normalized: np.ndarray, stats: t.Dict[str, t.Any], binar
     """归一化动作 → 物理动作。
 
     统计量键名有两套（见 `doc/robot/model.md` §5.2），这里按实际存在的键自动选择：
-      * q01/q99（框架 base_framework.unnormalize_actions 用的形式）
-      * min/max（LIBERO 客户端用的形式）
+      * q01/q99（优先；与框架 `base_framework.unnormalize_actions` 完全一致）
+      * min/max（q01/q99 缺失时的回退，LIBERO 客户端用的形式）
     `mask` 为 False 的维度保持归一化值不变（gripper 维通常为 False）。
-    Piper 的数据配置仍对 gripper 使用 `min_max`；因此关闭二值化时，显式对
-    gripper 做 min/max 反归一化，避免把归一化值直接当作物理动作下发。
+    Piper 数据把 gripper 也按 min_max 归一化，但通用 mask 把 gripper 维标成 False；
+    因此关闭二值化时显式把 mask[6] 置 True，让 gripper 也走 `0.5*(x+1)*(hi-lo)+lo`
+    反归一化（hi/lo 即上面选定的 q99/q01），避免把归一化值当物理动作下发。
     """
     hi, lo, mask = _action_statistics(stats)
     actions = np.asarray(normalized, dtype=np.float64)
@@ -127,10 +128,13 @@ def _state_vector(value: t.Any, state_dim: int) -> np.ndarray:
 
 
 def _return_action_chunk(obs: t.Dict[str, t.Any]) -> bool:
-    value = obs.get("return_action_chunk", True)
-    if not isinstance(value, bool):
-        raise TypeError(f"return_action_chunk must be bool, got {type(value)}")
-    return value
+    """可选字段 `return_action_chunk`；缺省 True。
+
+    控制端参考实现（dream_adapter/smolvla/vla_adapter/OpenVLA_OFT）统一用
+    `bool(observation.get("return_action_chunk", True))`，因此这里也做同样的宽松强制转换，
+    避免对端传 int/np.bool_ 时把一次合法请求判成错误而触发急停。
+    """
+    return bool(obs.get("return_action_chunk", True))
 
 
 def _validate_action_chunk(action: t.Any, expected_dim: int) -> np.ndarray:
@@ -212,6 +216,11 @@ class VLAJepaPiperPolicy:
 
         from starVLA.model.framework.base_framework import baseframework
         from starVLA.model.tools import read_mode_config
+
+        # starVLA.model.tools → overwatch 在 import 时执行 dictConfig(disable_existing_loggers=True)
+        # （overwatch.py:20-37），会把本模块 logger 置为 disabled；此处重新启用，
+        # 否则 "model loaded" / "warmup done" 这类启动与安全日志会被静默丢弃。
+        logger.disabled = False
 
         started = time.time()
         model = baseframework.from_pretrained(self.ckpt_path)  # 见 doc/robot/model.md §2.2

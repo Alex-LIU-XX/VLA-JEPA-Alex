@@ -108,7 +108,10 @@ class ZmqRepServer:
         except KeyboardInterrupt:
             logger.info("interrupted by user after %d request(s)", served)
         except zmq.ZMQError:
+            # 传输层已不可用（socket/context 被破坏）：记录后向上抛，让进程以非零码退出，
+            # 便于 supervisor 感知并重启；吞掉错误会让"服务已死"伪装成正常退出。
             logger.exception("ZMQ server loop failed after %d request(s)", served)
+            raise
         finally:
             self.close()
         return served

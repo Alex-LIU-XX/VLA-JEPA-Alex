@@ -30,6 +30,8 @@ import numpy as np
 # 允许 `python examples/real-robot/piper_zmq_server.py` 直接运行（同目录模块可 import）
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import policy as policy_module
+import transport as transport_module
 from policy import DryRunPolicy, VLAJepaPiperPolicy
 from transport import ZmqRepServer
 
@@ -85,31 +87,30 @@ def build_policy(args: argparse.Namespace) -> t.Any:
     )
 
 
-def main(argv: t.Optional[t.Sequence[str]] = None) -> int:
-    args = build_argparser().parse_args(argv)
-    logging.basicConfig(
-        level=getattr(logging, args.log_level.upper(), logging.INFO),
-        format="%(asctime)s - %(levelname)s - %(message)s",
-        force=True,
-    )
+def reassert_module_logging(level_name: str) -> None:
+    """在 starVLA 被 import 之后重新启用本目录的模块 logger。
 
-    if args.port < 1 or args.port > 65535:
-        raise SystemExit(f"--port must be in [1, 65535], got {args.port}")
-    if args.jpeg_quality < 1 or args.jpeg_quality > 100:
-        raise SystemExit(f"--jpeg-quality must be in [1, 100], got {args.jpeg_quality}")
-    if args.max_requests < 0:
-        raise SystemExit(f"--max-requests must be >= 0, got {args.max_requests}")
-    if args.chunk_steps < 0 or args.num_inference_timesteps < 0:
-        raise SystemExit("--chunk-steps and --num-inference-timesteps must be >= 0")
-    if args.host == "0.0.0.0":
-        logging.warning("server is exposed on all interfaces; firewall the port or bind a trusted interface")
+    `starVLA.model.tools` 会 import `training.trainer_utils.overwatch`，后者在模块级执行
+    `logging.config.dictConfig({"disable_existing_loggers": True, ...})`
+    （`overwatch.py:20-37`）。这会把 import 之前就已创建的 `policy` / `transport` logger
+    置为 `disabled=True`，导致 "model loaded"、"warmup done"、"ZMQ server ready" 等
+    启动与安全日志被**静默丢弃**。因此 `policy.load()`（触发 starVLA import）之后必须重新启用。
+    """
+    level = getattr(logging, level_name.upper(), logging.INFO)
+    logging.basicConfig(level=level, format="%(asctime)s - %(levelname)s - %(message)s", force=True)
+    for module in (policy_module, transport_module):
+        module_logger = getattr(module, "logger", None)
+        if module_logger is not None:
+            module_logger.disabled = False
+            module_logger.setLevel(level)
 
-    policy = build_policy(args)
-    policy.load()          # DryRunPolicy.load 是 no-op
-    if args.warmup:
-        policy.warmup()
 
-    state: t.Dict[str, t.Any] = {"step": 0, "last_cmd": None}
+def build_handler(policy: t.Any, state: t.Dict[str, t.Any]) -> t.Callable[[t.Dict[str, t.Any]], t.Dict[str, t.Any]]:
+    """构造请求处理函数：推理 + 输出动作契约校验 + 逐请求日志。
+
+    独立成工厂（而不是 main 里的闭包）是为了让测试能直接构造真实 handler，
+    不依赖端口绑定与进程启动。
+    """
 
     def handle(obs: t.Dict[str, t.Any]) -> t.Dict[str, t.Any]:
         started = time.time()
@@ -131,19 +132,56 @@ def main(argv: t.Optional[t.Sequence[str]] = None) -> int:
         )
         return response
 
+    return handle
+
+
+def build_fallback(
+    policy: t.Any, state: t.Dict[str, t.Any]
+) -> t.Callable[[t.Dict[str, t.Any]], t.Dict[str, t.Any]]:
+    """构造异常兜底：只回当前已验证 state 的保持位姿；缺失时抛错让 transport 回 error。"""
+
     def fallback(obs: t.Dict[str, t.Any]) -> t.Dict[str, t.Any]:
-        """异常兜底：只回当前已验证 state 的保持位姿；缺失时返回 error，禁止继续运动。"""
         action = policy.make_hold_action(obs)
         logging.warning("inference failed at step=%d, returning current-state hold chunk", state["step"])
         return {"action": np.ascontiguousarray(action, dtype=np.float32)}
 
+    return fallback
+
+
+def main(argv: t.Optional[t.Sequence[str]] = None) -> int:
+    args = build_argparser().parse_args(argv)
+    logging.basicConfig(
+        level=getattr(logging, args.log_level.upper(), logging.INFO),
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        force=True,
+    )
+
+    if args.port < 1 or args.port > 65535:
+        raise SystemExit(f"--port must be in [1, 65535], got {args.port}")
+    if args.jpeg_quality < 1 or args.jpeg_quality > 100:
+        raise SystemExit(f"--jpeg-quality must be in [1, 100], got {args.jpeg_quality}")
+    if args.max_requests < 0:
+        raise SystemExit(f"--max-requests must be >= 0, got {args.max_requests}")
+    if args.chunk_steps < 0 or args.num_inference_timesteps < 0:
+        raise SystemExit("--chunk-steps and --num-inference-timesteps must be >= 0")
+    if args.host == "0.0.0.0":
+        logging.warning("server is exposed on all interfaces; firewall the port or bind a trusted interface")
+
+    policy = build_policy(args)
+    policy.load()          # DryRunPolicy.load 是 no-op；真模型会 import starVLA
+    reassert_module_logging(args.log_level)  # 抵消 starVLA dictConfig 对模块 logger 的禁用
+    if args.warmup:
+        policy.warmup()
+
+    state: t.Dict[str, t.Any] = {"step": 0, "last_cmd": None}
+
     logging.info("client must be configured with state_type=joint + absolute_action=True (absolute joint targets)")
     server = ZmqRepServer(
-        handler=handle,
+        handler=build_handler(policy, state),
         host=args.host,
         port=args.port,
         jpeg_quality=args.jpeg_quality,
-        fallback=fallback,
+        fallback=build_fallback(policy, state),
         max_requests=args.max_requests,
     )
     served = server.serve_forever()

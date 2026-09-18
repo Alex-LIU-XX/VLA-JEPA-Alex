@@ -406,12 +406,12 @@ class VLAJepaPiperPolicy:
 
 | 级别 | 内容 | 通过标准 | 状态 |
 |---|---|---|---|
-| T1 单元 | `wire.py` 与 `vla_infer.src.zmq.protocol` 交叉 round-trip（同一 bytes 双向解包一致）；含 3D uint8 图像、float32/float64 状态、str/bool | 逐字段 `np.allclose` / 类型一致 | ✅ **已通过**（实测：控制端 pack → 本 server → 控制端 unpack，以及反向，均得 `(7,7) float32`） |
+| T1 单元 | `wire.py` 与 `vla_infer.src.zmq.protocol` 交叉 round-trip（同一 bytes 双向解包一致）；含 3D uint8 图像、float32/float64 状态、str/bool | 逐字段 `np.allclose` / 类型一致 | ✅ **已通过且已自动化**：`tests/test_real_robot_wire_interop.py` 按路径加载控制端真实 `VLAProtocol`，双向验证请求/响应线格式；`tests/test_real_robot_protocol.py` 覆盖坏帧/非映射 payload/资源回收 |
 | T2 互通 | 用**机器人环境的 `VlaZmqClient`** 连我们的 server（假模型，返回固定 chunk） | 客户端拿到 `(7,7) float32`，无异常/无超时 | 🟡 **协议层已通过**：用 `selftest_client.py`（等价 REQ 收发）+ `--dry-run` 假策略验证；真 `VlaZmqClient` 需在机器人环境复跑 |
 | T3 模型 | 真 ckpt 载入 + 单帧真实观测推理 | shape/dtype 正确；latency 记录；反归一化后数值落在训练 `q01/q99` 范围内 | ✅ **首轮通过**：`iclr_adjust_cup` 权重已载入并预热，8 个窗口延迟约 100–123 ms，P95 约 123 ms；实际 server 单请求客户端总延迟 193 ms |
 | T4 离线回放 | 从数据集取 N 个窗口，构造**与真机同路径**的请求（图像 → letterbox 224 → JPEG80 → 解包），比较 server 返回与 GT chunk（复用 `scripts/analyze_openloop.py` 的指标思路） | MAE/R² 与直接用 `eval_openloop.py`（无 JPEG/letterbox）的结果同量级；差异可解释 | ✅ **已完成**：连续 gripper 路径 `--no-binarize-gripper` 已完成 50 episode × 2 窗口（100 窗口）回放；归一化 MAE=`0.0381`，gripper 维=`0.00153`，P95=`100.2 ms`。结果见 `eval_openloop/iclr_adjust_cup_piper_zmq_replay_continuous_gripper_50ep_2windows/replay.json`；默认二值路径仍保留为对照 |
 | T4-SC 开环 | server + client 按数据集 episode 逐帧通信，保存完整 action chunk、step-0 对齐结果和轨迹图 | 连续请求无超时；每个回包为 `(7,7) float32`；JSON/NPZ/PNG 完整 | ✅ **已完成**：`adjust_cup` episode 0 共 124 帧，124 次请求全部成功；P95=`196.5 ms`，step-0 归一化 MAE=`0.0692`，结果见 `eval_openloop/iclr_adjust_cup_piper_zmq_openloop_ep0/` |
-| T5 降级 | 构造坏 payload（缺 key、错 dtype、图像 4 通道）、模型内部抛异常 | client 不挂死；server 日志清晰；超时路径可复现 | 🟡 **坏 payload 已通过**（缺图像 → 记 `ValueError` + 回退保持位姿，server 不退出）；模型异常路径待做 |
+| T5 降级 | 构造坏 payload（缺 key、错 dtype、图像 4 通道）、handler/推理异常 | client 不挂死；server 日志清晰；无 state 时 fail-closed | ✅ **已通过且已自动化**：`tests/test_real_robot_protocol.py` 覆盖 ①坏帧仍回包且 REP 恢复 ②handler 异常 → 用当前 state 回保持位姿 ③无 state → 回 `{"error"}` 且不伪造动作；`selftest_client.py --send-bad-payload` 端到端复验 |
 | T6 真机 dry-run | 机械臂悬空或垫高，`max_steps` 小（如 20），低速、有人守急停 | 无异常动作方向；每周期时延稳定；执行 7 步/块 | ⏳ 待做 |
 | T7 任务评测 | 每个任务固定初始位姿跑 N 次 | 成功率、平均完成时间、失败模式记录（写入 `doc/reports/`） | ⏳ 待做 |
 
