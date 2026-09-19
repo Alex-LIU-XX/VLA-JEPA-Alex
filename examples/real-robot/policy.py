@@ -66,16 +66,17 @@ def get_instruction(obs: t.Dict[str, t.Any], default: str = "") -> str:
     return default
 
 
-def unnormalize_actions(normalized: np.ndarray, stats: t.Dict[str, t.Any], binarize_gripper: bool = True) -> np.ndarray:
+def unnormalize_actions(normalized: np.ndarray, stats: t.Dict[str, t.Any], binarize_gripper: bool = False) -> np.ndarray:
     """归一化动作 → 物理动作。
 
-    统计量键名有两套（见 `doc/robot/model.md` §5.2），这里按实际存在的键自动选择：
-      * q01/q99（优先；与框架 `base_framework.unnormalize_actions` 完全一致）
-      * min/max（q01/q99 缺失时的回退，LIBERO 客户端用的形式）
-    `mask` 为 False 的维度保持归一化值不变（gripper 维通常为 False）。
-    Piper 数据把 gripper 也按 min_max 归一化，但通用 mask 把 gripper 维标成 False；
-    因此关闭二值化时显式把 mask[6] 置 True，让 gripper 也走 `0.5*(x+1)*(hi-lo)+lo`
-    反归一化（hi/lo 即上面选定的 q99/q01），避免把归一化值当物理动作下发。
+    统计量键名有两套，按实际存在的键自动选择：
+      * min/max（优先；与 eval_openloop denormalize 及 PiperDataConfig min_max 归一化一致）
+      * q99/q01（min/max 缺失时的回退）
+    公式：`0.5 * (x + 1) * (hi - lo) + lo`，与框架及 eval_openloop 的反归一化等价。
+
+    `mask` 为 False 的维度保持归一化值不变。Piper 数据集的 mask[6]=false（gripper），
+    但 PiperDataConfig 用 min_max 归一化 gripper，因此关闭二值化时显式把 mask[6] 置 True，
+    让 gripper 也走反归一化，避免把归一化值（约 -1~0）当物理动作下发。
     """
     hi, lo, mask = _action_statistics(stats)
     actions = np.asarray(normalized, dtype=np.float64)
@@ -100,12 +101,12 @@ def unnormalize_actions(normalized: np.ndarray, stats: t.Dict[str, t.Any], binar
 
 
 def _action_statistics(stats: t.Dict[str, t.Any]) -> t.Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    if "q99" in stats and "q01" in stats:
-        hi, lo = np.asarray(stats["q99"], dtype=np.float64), np.asarray(stats["q01"], dtype=np.float64)
-    elif "max" in stats and "min" in stats:
+    if "max" in stats and "min" in stats:
         hi, lo = np.asarray(stats["max"], dtype=np.float64), np.asarray(stats["min"], dtype=np.float64)
+    elif "q99" in stats and "q01" in stats:
+        hi, lo = np.asarray(stats["q99"], dtype=np.float64), np.asarray(stats["q01"], dtype=np.float64)
     else:
-        raise KeyError(f"dataset_statistics.action 里既没有 q01/q99 也没有 min/max，实际键：{sorted(stats)}")
+        raise KeyError(f"dataset_statistics.action 里既没有 min/max 也没有 q01/q99，实际键：{sorted(stats)}")
     if hi.ndim != 1 or lo.ndim != 1 or hi.shape != lo.shape or hi.size == 0:
         raise ValueError(f"action statistics must be matching non-empty vectors, got {lo.shape} and {hi.shape}")
     if not np.all(np.isfinite(hi)) or not np.all(np.isfinite(lo)) or np.any(hi < lo):
@@ -192,7 +193,7 @@ class VLAJepaPiperPolicy:
         chunk_steps: int = 0,
         unnorm_key: str = "",
         default_instruction: str = "",
-        binarize_gripper: bool = True,
+        binarize_gripper: bool = False,
     ) -> None:
         self.ckpt_path = ckpt_path
         self.device = device

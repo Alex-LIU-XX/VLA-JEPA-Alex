@@ -56,8 +56,8 @@ def build_argparser() -> argparse.ArgumentParser:
                         help="dataset_statistics.json 的顶层键；权重只有一份统计量时可留空")
     parser.add_argument("--default-instruction", type=str, default="",
                         help="请求里没有 cmd/instruction 时使用；建议填该任务在 tasks.jsonl 里的原文")
-    parser.add_argument("--no-binarize-gripper", action="store_true",
-                        help="关闭第 6 维（夹爪）0/1 二值化，并按 Piper min/max 统计量输出连续物理值")
+    parser.add_argument("--binarize-gripper", action="store_true", default=False,
+                        help="开启第 7 维（夹爪）0/1 二值化（默认关闭，输出连续物理值）")
     parser.add_argument("--dry-run", action="store_true",
                         help="不载入模型，返回保持位姿的动作块（协议自检用）")
     parser.add_argument("--warmup", dest="warmup", action="store_true", default=True)
@@ -83,7 +83,7 @@ def build_policy(args: argparse.Namespace) -> t.Any:
         chunk_steps=args.chunk_steps,
         unnorm_key=args.unnorm_key,
         default_instruction=args.default_instruction,
-        binarize_gripper=not args.no_binarize_gripper,
+        binarize_gripper=args.binarize_gripper,
     )
 
 

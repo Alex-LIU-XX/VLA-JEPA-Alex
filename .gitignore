@@ -11,3 +11,4 @@ __pycache__/
 .venv/
 weights/
 .hf-home/
+datasets/*
